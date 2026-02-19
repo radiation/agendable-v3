@@ -1,0 +1,84 @@
+[project]
+name = "agendable-v3"
+version = "0.1.0"
+description = "Tasks and agenda tracking for recurring meetings"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+	"fastapi>=0.115",
+	"uvicorn[standard]>=0.30",
+	"jinja2>=3.1",
+	"python-multipart>=0.0.9",
+	"sqlalchemy[asyncio]>=2.0",
+	"aiosqlite>=0.20",
+	"asyncpg>=0.29",
+	"pydantic-settings>=2.2",
+	"httpx>=0.27",
+	"python-dateutil>=2.9",
+]
+
+[project.scripts]
+agendable = "agendable.cli:main"
+
+[dependency-groups]
+dev = [
+	"pre-commit>=3.7",
+	"mypy>=1.10",
+	"ruff>=0.6",
+	"types-python-dateutil>=2.9.0.20240316",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agendable"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = [
+	"E",
+	"F",
+	"W",
+	"I",
+	"B",
+	"UP",
+	"SIM",
+	"RUF",
+]
+ignore = [
+	"E501", # formatter handles line length; allow long strings/URLs
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/agendable/web/routes.py" = [
+	"B008", # FastAPI's Depends(...) is the intended pattern in route signatures
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agendable"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unreachable = true
+pretty = true
+show_error_codes = true
+plugins = [
+	"sqlalchemy.ext.mypy.plugin",
+]
+
+# 3rd party libraries without complete typing coverage
+[[tool.mypy.overrides]]
+module = [
+	"aiosqlite.*",
+]
+ignore_missing_imports = true

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Agendable — Series{% endblock %}
+
+{% block content %}
+<section>
+    <h2>Meeting series</h2>
+
+    <form method="post" action="/series" style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+        <label>
+            Title
+            <input name="title" required />
+        </label>
+        <label>
+            Default interval (days)
+            <input name="default_interval_days" type="number" min="1" value="7" required />
+        </label>
+        <button type="submit">Create</button>
+    </form>
+
+    <ul>
+        {% for s in series %}
+        <li>
+            <a href="/series/{{ s.id }}">{{ s.title }}</a>
+            <small>(every {{ s.default_interval_days }} days)</small>
+        </li>
+        {% else %}
+        <li><em>No series yet. Create one above.</em></li>
+        {% endfor %}
+    </ul>
+</section>
+{% endblock %}

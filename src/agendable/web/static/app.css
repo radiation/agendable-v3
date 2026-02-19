@@ -1,0 +1,17 @@
+body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+input,
+button {
+    padding: .35rem .5rem;
+}
+
+label {
+    display: grid;
+    gap: .25rem;
+}
+
+ul {
+    padding-left: 1.25rem;
+}

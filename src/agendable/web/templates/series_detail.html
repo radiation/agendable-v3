@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Agendable — {{ series.title }}{% endblock %}
+
+{% block content %}
+<p><a href="/">← Back</a></p>
+
+<section>
+    <h2>{{ series.title }}</h2>
+    <p><small>Default interval: {{ series.default_interval_days }} days</small></p>
+</section>
+
+<hr />
+
+<section>
+    <h3>Meetings</h3>
+
+    <form method="post" action="/series/{{ series.id }}/occurrences"
+        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+        <label>
+            Scheduled at (UTC)
+            <input name="scheduled_at" type="datetime-local" required />
+        </label>
+        <button type="submit">Add meeting</button>
+    </form>
+
+    <ul>
+        {% for o in occurrences %}
+        <li>
+            {{ o.scheduled_at }}
+            {% if active_occurrence and o.id == active_occurrence.id %}
+            <strong>(active)</strong>
+            {% endif %}
+        </li>
+        {% else %}
+        <li><em>No meetings yet.</em></li>
+        {% endfor %}
+    </ul>
+</section>
+
+<hr />
+
+<section>
+    <h3>Series tasks</h3>
+
+    <form method="post" action="/series/{{ series.id }}/tasks"
+        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+        <label>
+            Task
+            <input name="title" required />
+        </label>
+        <button type="submit">Add task</button>
+    </form>
+
+    <ul>
+        {% for t in tasks %}
+        <li>
+            <form method="post" action="/tasks/{{ t.id }}/toggle" style="display:inline;">
+                <button type="submit">{% if t.is_done %}Undo{% else %}Done{% endif %}</button>
+            </form>
+            {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
+        </li>
+        {% else %}
+        <li><em>No tasks yet.</em></li>
+        {% endfor %}
+    </ul>
+</section>
+
+<hr />
+
+<section>
+    <h3>Agenda (most recent meeting)</h3>
+
+    {% if not active_occurrence %}
+    <p><em>Create a meeting above to add agenda items.</em></p>
+    {% else %}
+    <form method="post" action="/occurrences/{{ active_occurrence.id }}/agenda"
+        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+        <label>
+            Agenda item
+            <input name="body" required />
+        </label>
+        <button type="submit">Add</button>
+    </form>
+
+    <ul>
+        {% for a in agenda_items %}
+        <li>
+            <form method="post" action="/agenda/{{ a.id }}/toggle" style="display:inline;">
+                <button type="submit">{% if a.is_done %}Undo{% else %}Done{% endif %}</button>
+            </form>
+            {% if a.is_done %}<s>{{ a.body }}</s>{% else %}{{ a.body }}{% endif %}
+        </li>
+        {% else %}
+        <li><em>No agenda items yet.</em></li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>
+{% endblock %}

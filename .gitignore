@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.db
+*.sqlite
+.sqlite3
+.env.*
+.env
+.DS_Store
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Editor / OS
+.vscode/*.log

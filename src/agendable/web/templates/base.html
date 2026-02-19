@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Agendable{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <link rel="stylesheet" href="/static/app.css" />
+</head>
+
+<body>
+    <main style="max-width: 960px; margin: 2rem auto; padding: 0 1rem;">
+        <header style="display:flex; align-items: baseline; justify-content: space-between; gap: 1rem;">
+            <h1 style="margin: 0;">Agendable</h1>
+            <form method="post" action="/bootstrap">
+                <button type="submit">Bootstrap local user</button>
+            </form>
+        </header>
+        <hr />
+        {% block content %}{% endblock %}
+    </main>
+</body>
+
+</html>
