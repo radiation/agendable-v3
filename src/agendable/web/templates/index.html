@@ -6,6 +6,9 @@
 <section>
     <h2>Meeting series</h2>
 
+    {% if not current_user %}
+    <p><em>Sign in to create and view meeting series.</em></p>
+    {% else %}
     <form method="post" action="/series" style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
         <label>
             Title
@@ -28,5 +31,6 @@
         <li><em>No series yet. Create one above.</em></li>
         {% endfor %}
     </ul>
+    {% endif %}
 </section>
 {% endblock %}

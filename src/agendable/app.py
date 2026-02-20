@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from agendable.db import engine
 from agendable.models import Base
@@ -24,6 +25,13 @@ def create_app() -> FastAPI:
         yield
 
     app = FastAPI(lifespan=lifespan)
+
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.session_secret.get_secret_value(),
+        session_cookie=settings.session_cookie_name,
+        same_site="lax",
+    )
 
     app.include_router(web_router)
 

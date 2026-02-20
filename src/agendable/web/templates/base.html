@@ -13,9 +13,16 @@
     <main style="max-width: 960px; margin: 2rem auto; padding: 0 1rem;">
         <header style="display:flex; align-items: baseline; justify-content: space-between; gap: 1rem;">
             <h1 style="margin: 0;">Agendable</h1>
-            <form method="post" action="/bootstrap">
-                <button type="submit">Bootstrap local user</button>
-            </form>
+            {% if current_user %}
+            <div style="display:flex; gap: .75rem; align-items: baseline;">
+                <small>Signed in as {{ current_user.email }}</small>
+                <form method="post" action="/logout" style="display:inline;">
+                    <button type="submit">Logout</button>
+                </form>
+            </div>
+            {% else %}
+            <a href="/login">Sign in</a>
+            {% endif %}
         </header>
         <hr />
         {% block content %}{% endblock %}

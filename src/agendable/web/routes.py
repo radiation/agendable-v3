@@ -9,7 +9,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import Response
 
+from agendable.auth import hash_password, require_user, verify_password
 from agendable.db import get_session
 from agendable.models import AgendaItem, MeetingOccurrence, MeetingSeries, Task, User
 
@@ -34,27 +36,83 @@ templates = Jinja2Templates(directory=str(templates_dir))
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request, session: AsyncSession = Depends(get_session)) -> HTMLResponse:
-    result = await session.execute(select(MeetingSeries).order_by(MeetingSeries.created_at.desc()))
-    series = list(result.scalars().all())
+    current_user: User | None
+    try:
+        current_user = await require_user(request, session)
+    except HTTPException:
+        current_user = None
+
+    series: list[MeetingSeries] = []
+    if current_user is not None:
+        result = await session.execute(
+            select(MeetingSeries)
+            .where(MeetingSeries.owner_user_id == current_user.id)
+            .order_by(MeetingSeries.created_at.desc())
+        )
+        series = list(result.scalars().all())
+
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "series": series,
+            "current_user": current_user,
         },
     )
 
 
-@router.post("/bootstrap", response_class=RedirectResponse)
-async def bootstrap(session: AsyncSession = Depends(get_session)) -> RedirectResponse:
-    # Minimal bootstrap to avoid building auth on day 1.
-    # Creates a single local user if none exists.
-    existing = await session.execute(select(User).limit(1))
-    if existing.scalar_one_or_none() is None:
-        user = User(email="local@example.com", display_name="Local User")
+@router.get("/login", response_class=HTMLResponse)
+async def login_form(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {
+            "error": None,
+            "current_user": None,
+        },
+    )
+
+
+@router.post("/login", response_class=HTMLResponse)
+async def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    normalized_email = email.strip().lower()
+
+    result = await session.execute(select(User).where(User.email == normalized_email))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        user = User(
+            email=normalized_email,
+            display_name=normalized_email,
+            password_hash=hash_password(password),
+        )
         session.add(user)
         await session.commit()
+        await session.refresh(user)
+    else:
+        if user.password_hash is None or not verify_password(password, user.password_hash):
+            return templates.TemplateResponse(
+                request,
+                "login.html",
+                {
+                    "error": "Invalid email or password",
+                    "current_user": None,
+                },
+                status_code=401,
+            )
 
+    request.session["user_id"] = str(user.id)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@router.post("/logout", response_class=RedirectResponse)
+async def logout(request: Request) -> RedirectResponse:
+    request.session.clear()
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -63,14 +121,10 @@ async def create_series(
     title: str = Form(...),
     default_interval_days: int = Form(7),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    user_result = await session.execute(select(User).order_by(User.created_at.asc()).limit(1))
-    owner = user_result.scalar_one_or_none()
-    if owner is None:
-        raise HTTPException(status_code=400, detail="Run /bootstrap first")
-
     series = MeetingSeries(
-        owner_user_id=owner.id,
+        owner_user_id=current_user.id,
         title=title,
         default_interval_days=default_interval_days,
     )
@@ -85,9 +139,13 @@ async def series_detail(
     request: Request,
     series_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
 ) -> HTMLResponse:
     series_result = await session.execute(
-        select(MeetingSeries).where(MeetingSeries.id == series_id)
+        select(MeetingSeries).where(
+            MeetingSeries.id == series_id,
+            MeetingSeries.owner_user_id == current_user.id,
+        )
     )
     series = series_result.scalar_one_or_none()
     if series is None:
@@ -125,6 +183,7 @@ async def series_detail(
             "active_occurrence": active_occurrence,
             "tasks": tasks,
             "agenda_items": agenda_items,
+            "current_user": current_user,
         },
     )
 
@@ -134,9 +193,13 @@ async def create_occurrence(
     series_id: uuid.UUID,
     scheduled_at: str = Form(...),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
 ) -> RedirectResponse:
     series_result = await session.execute(
-        select(MeetingSeries).where(MeetingSeries.id == series_id)
+        select(MeetingSeries).where(
+            MeetingSeries.id == series_id,
+            MeetingSeries.owner_user_id == current_user.id,
+        )
     )
     if series_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404)
@@ -153,7 +216,17 @@ async def create_task(
     series_id: uuid.UUID,
     title: str = Form(...),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
 ) -> RedirectResponse:
+    series_result = await session.execute(
+        select(MeetingSeries).where(
+            MeetingSeries.id == series_id,
+            MeetingSeries.owner_user_id == current_user.id,
+        )
+    )
+    if series_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404)
+
     task = Task(series_id=series_id, title=title)
     session.add(task)
     await session.commit()
@@ -162,11 +235,20 @@ async def create_task(
 
 @router.post("/tasks/{task_id}/toggle", response_class=RedirectResponse)
 async def toggle_task(
-    task_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+    task_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
 ) -> RedirectResponse:
     result = await session.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if task is None:
+        raise HTTPException(status_code=404)
+
+    series_result = await session.execute(
+        select(MeetingSeries).where(MeetingSeries.id == task.series_id)
+    )
+    series = series_result.scalar_one_or_none()
+    if series is None or series.owner_user_id != current_user.id:
         raise HTTPException(status_code=404)
 
     task.is_done = not task.is_done
@@ -179,12 +261,22 @@ async def add_agenda_item(
     occurrence_id: uuid.UUID,
     body: str = Form(...),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
 ) -> RedirectResponse:
     occ_result = await session.execute(
         select(MeetingOccurrence).where(MeetingOccurrence.id == occurrence_id)
     )
     occurrence = occ_result.scalar_one_or_none()
     if occurrence is None:
+        raise HTTPException(status_code=404)
+
+    series_result = await session.execute(
+        select(MeetingSeries).where(
+            MeetingSeries.id == occurrence.series_id,
+            MeetingSeries.owner_user_id == current_user.id,
+        )
+    )
+    if series_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404)
 
     item = AgendaItem(occurrence_id=occurrence_id, body=body)
@@ -196,7 +288,9 @@ async def add_agenda_item(
 
 @router.post("/agenda/{item_id}/toggle", response_class=RedirectResponse)
 async def toggle_agenda_item(
-    item_id: uuid.UUID, session: AsyncSession = Depends(get_session)
+    item_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
 ) -> RedirectResponse:
     item_result = await session.execute(select(AgendaItem).where(AgendaItem.id == item_id))
     item = item_result.scalar_one_or_none()
@@ -209,6 +303,13 @@ async def toggle_agenda_item(
         select(MeetingOccurrence).where(MeetingOccurrence.id == item.occurrence_id)
     )
     occurrence = occ_result.scalar_one()
+
+    series_result = await session.execute(
+        select(MeetingSeries).where(MeetingSeries.id == occurrence.series_id)
+    )
+    series = series_result.scalar_one_or_none()
+    if series is None or series.owner_user_id != current_user.id:
+        raise HTTPException(status_code=404)
 
     await session.commit()
     return RedirectResponse(url=f"/series/{occurrence.series_id}", status_code=303)

@@ -8,7 +8,7 @@ Minimal app for tracking agenda items and tasks for recurring meetings (e.g. 1:1
 - Start the server: `uv run uvicorn agendable.app:app --reload`
 - Open: `http://127.0.0.1:8000/`
 
-First time: click **Bootstrap local user**, then create a meeting series.
+First time: go to `/login` and sign in (new users are auto-provisioned in the MVP).
 
 SQLite is the default via `AGENDABLE_DATABASE_URL=sqlite+aiosqlite:///./agendable.db`.
 
@@ -33,6 +33,10 @@ Recommended workflow (especially for Postgres / long-lived environments):
 - Create a new migration (autogenerate): `uv run alembic revision --autogenerate -m "..."`
 
 In long-lived environments, set `AGENDABLE_AUTO_CREATE_DB=false` and use Alembic instead of startup-time `create_all()`.
+
+For production, override the session secret:
+
+- `AGENDABLE_SESSION_SECRET='...'`
 
 ### Dev tooling
 

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     # and set this to false.
     auto_create_db: bool = True
 
+    # Session cookie auth (MVP). In production, override via env.
+    session_secret: SecretStr = SecretStr("dev-insecure-change-me")
+    session_cookie_name: str = "agendable_session"
+
     # Reminder integrations (optional for now)
     slack_webhook_url: SecretStr | None = None
 
