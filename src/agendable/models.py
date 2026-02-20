@@ -4,7 +4,17 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -30,6 +40,33 @@ class User(Base):
     )
 
     meeting_series: Mapped[list[MeetingSeries]] = relationship(back_populates="owner")
+    external_identities: Mapped[list[ExternalIdentity]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class ExternalIdentity(Base):
+    __tablename__ = "external_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_external_identity_provider_subject"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+
+    # Identity provider (e.g. "google", "okta", "azuread", "saml")
+    provider: Mapped[str] = mapped_column(String(50), index=True)
+    # Provider subject / NameID / sub
+    subject: Mapped[str] = mapped_column(String(255))
+
+    # Optional cached attributes
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    user: Mapped[User] = relationship(back_populates="external_identities")
 
 
 class MeetingSeries(Base):

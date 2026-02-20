@@ -3,7 +3,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
+from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -13,7 +15,16 @@ from starlette.responses import Response
 
 from agendable.auth import hash_password, require_user, verify_password
 from agendable.db import get_session
-from agendable.models import AgendaItem, MeetingOccurrence, MeetingSeries, Task, User
+from agendable.models import (
+    AgendaItem,
+    ExternalIdentity,
+    MeetingOccurrence,
+    MeetingSeries,
+    Task,
+    User,
+)
+from agendable.settings import get_settings
+from agendable.sso_google import build_oauth, google_enabled
 
 
 def _parse_dt(value: str) -> datetime:
@@ -32,6 +43,8 @@ router = APIRouter()
 
 templates_dir = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
+
+oauth = build_oauth()
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -69,6 +82,7 @@ async def login_form(request: Request) -> HTMLResponse:
         {
             "error": None,
             "current_user": None,
+            "google_enabled": google_enabled(),
         },
     )
 
@@ -102,9 +116,86 @@ async def login(
                 {
                     "error": "Invalid email or password",
                     "current_user": None,
+                    "google_enabled": google_enabled(),
                 },
                 status_code=401,
             )
+
+    request.session["user_id"] = str(user.id)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@router.get("/auth/google/start", response_class=RedirectResponse)
+async def google_start(request: Request) -> Response:
+    if not google_enabled():
+        raise HTTPException(status_code=404)
+
+    redirect_uri = str(request.url_for("google_callback"))
+    return cast(Response, await oauth.google.authorize_redirect(request, redirect_uri))
+
+
+@router.get("/auth/google/callback", name="google_callback")
+async def google_callback(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    if not google_enabled():
+        raise HTTPException(status_code=404)
+
+    try:
+        token = await oauth.google.authorize_access_token(request)
+        userinfo = await oauth.google.parse_id_token(request, token)
+    except OAuthError:
+        return RedirectResponse(url="/login", status_code=303)
+
+    sub = str(userinfo.get("sub", ""))
+    email = str(userinfo.get("email", "")).strip().lower()
+    email_verified = bool(userinfo.get("email_verified"))
+    name = str(userinfo.get("name") or email)
+
+    if not sub or not email or not email_verified:
+        return RedirectResponse(url="/login", status_code=303)
+
+    settings = get_settings()
+    if settings.allowed_email_domain is not None:
+        allowed = settings.allowed_email_domain.strip().lower().lstrip("@")
+        if not email.endswith(f"@{allowed}"):
+            return templates.TemplateResponse(
+                request,
+                "login.html",
+                {
+                    "error": "Email domain not allowed",
+                    "current_user": None,
+                    "google_enabled": google_enabled(),
+                },
+                status_code=403,
+            )
+
+    ext_result = await session.execute(
+        select(ExternalIdentity).where(
+            ExternalIdentity.provider == "google",
+            ExternalIdentity.subject == sub,
+        )
+    )
+    ext = ext_result.scalar_one_or_none()
+
+    if ext is not None:
+        user_result = await session.execute(select(User).where(User.id == ext.user_id))
+        user = user_result.scalar_one_or_none()
+        if user is None:
+            return RedirectResponse(url="/login", status_code=303)
+    else:
+        user_result = await session.execute(select(User).where(User.email == email))
+        user = user_result.scalar_one_or_none()
+        if user is None:
+            user = User(email=email, display_name=name, password_hash=None)
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+
+        ext = ExternalIdentity(user_id=user.id, provider="google", subject=sub, email=email)
+        session.add(ext)
+        await session.commit()
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/", status_code=303)

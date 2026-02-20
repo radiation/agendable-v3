@@ -5,6 +5,7 @@ Minimal app for tracking agenda items and tasks for recurring meetings (e.g. 1:1
 ### Run locally (SQLite)
 
 - Install dependencies: `uv sync`
+- Initialize DB (migrations): `uv run alembic upgrade head`
 - Start the server: `uv run uvicorn agendable.app:app --reload`
 - Open: `http://127.0.0.1:8000/`
 
@@ -18,7 +19,7 @@ Set `AGENDABLE_DATABASE_URL` to an asyncpg URL, for example:
 
 - `AGENDABLE_DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/agendable`
 
-Tables are created on app startup (for now). In production we’ll likely move to Alembic migrations.
+Tables are managed by Alembic migrations.
 
 ### CLI
 
@@ -34,9 +35,40 @@ Recommended workflow (especially for Postgres / long-lived environments):
 
 In long-lived environments, set `AGENDABLE_AUTO_CREATE_DB=false` and use Alembic instead of startup-time `create_all()`.
 
+If you see `table users already exists` when running `alembic upgrade head`, it usually means the DB tables were created outside Alembic.
+For a dev DB you can delete `agendable.db` and re-run `alembic upgrade head`. If you need to keep the DB contents, use `alembic stamp head`
+*after* verifying the schema matches the current migrations.
+
 For production, override the session secret:
 
 - `AGENDABLE_SESSION_SECRET='...'`
+
+### SSO groundwork
+
+The app includes an `external_identities` table to map external identity provider subjects (OIDC `sub`, SAML NameID, etc.) to internal users.
+This lets us add OAuth/OIDC and/or SAML later without changing the rest of the data model.
+
+#### Google OIDC (optional)
+
+Setup (Google Cloud Console):
+
+- Create/select a Google Cloud project
+- Configure OAuth consent screen (Internal for Workspace-only, External for Gmail/public testing)
+- Create credentials: OAuth client ID → **Web application**
+- Add an authorized redirect URI that matches how you access the app locally:
+	- `http://127.0.0.1:8000/auth/google/callback`
+	- (optional) `http://localhost:8000/auth/google/callback`
+
+Note: `localhost` and `127.0.0.1` are treated as different origins by Google OAuth; add whichever you use.
+
+To enable "Sign in with Google", set:
+
+- `AGENDABLE_GOOGLE_CLIENT_ID='...'`
+- `AGENDABLE_GOOGLE_CLIENT_SECRET='...'`
+
+Optional restriction:
+
+- `AGENDABLE_ALLOWED_EMAIL_DOMAIN='example.com'` (only allows `@example.com` users)
 
 ### Dev tooling
 
