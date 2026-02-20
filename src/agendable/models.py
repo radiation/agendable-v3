@@ -78,6 +78,13 @@ class MeetingSeries(Base):
     title: Mapped[str] = mapped_column(String(200))
     default_interval_days: Mapped[int] = mapped_column(Integer, default=7)
 
+    # RRULE recurrence (optional; preferred over default_interval_days when present).
+    recurrence_rrule: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recurrence_dtstart: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recurrence_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

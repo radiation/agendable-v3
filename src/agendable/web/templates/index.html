@@ -9,15 +9,88 @@
     {% if not current_user %}
     <p><em>Sign in to create and view meeting series.</em></p>
     {% else %}
-    <form method="post" action="/series" style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+    <form method="post" action="/series" class="form-grid">
         <label>
             Title
             <input name="title" required />
         </label>
+
         <label>
-            Default interval (days)
-            <input name="default_interval_days" type="number" min="1" value="7" required />
+            Repeat
+            <select name="recurrence_freq" required>
+                <option value="DAILY">Daily</option>
+                <option value="WEEKLY">Weekly</option>
+                <option value="MONTHLY">Monthly</option>
+            </select>
         </label>
+        <label>
+            Every
+            <input name="recurrence_interval" type="number" min="1" max="365" value="1" required />
+        </label>
+
+        <div class="group span-all">
+            <strong>Weekly days</strong>
+            <div class="options-row">
+                <label class="inline"><input type="checkbox" name="weekly_byday" value="MO" /> Mon</label>
+                <label class="inline"><input type="checkbox" name="weekly_byday" value="TU" /> Tue</label>
+                <label class="inline"><input type="checkbox" name="weekly_byday" value="WE" /> Wed</label>
+                <label class="inline"><input type="checkbox" name="weekly_byday" value="TH" /> Thu</label>
+                <label class="inline"><input type="checkbox" name="weekly_byday" value="FR" /> Fri</label>
+                <label class="inline"><input type="checkbox" name="weekly_byday" value="SA" /> Sat</label>
+                <label class="inline"><input type="checkbox" name="weekly_byday" value="SU" /> Sun</label>
+            </div>
+            <small><em>If none selected, defaults to the start date's weekday.</em></small>
+        </div>
+
+        <div class="group span-all">
+            <strong>Monthly</strong>
+            <div class="options-row">
+                <label class="inline">
+                    <input type="radio" name="monthly_mode" value="monthday" checked />
+                    On day
+                </label>
+                <input name="monthly_bymonthday" type="number" min="1" max="31" style="max-width: 6rem;" />
+            </div>
+            <div class="options-row">
+                <label class="inline">
+                    <input type="radio" name="monthly_mode" value="nth_weekday" />
+                    On
+                </label>
+                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="1" /> 1st</label>
+                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="2" /> 2nd</label>
+                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="3" /> 3rd</label>
+                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="4" /> 4th</label>
+                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="-1" /> Last</label>
+                <select name="monthly_byday">
+                    <option value="MO">Mon</option>
+                    <option value="TU">Tue</option>
+                    <option value="WE">Wed</option>
+                    <option value="TH">Thu</option>
+                    <option value="FR">Fri</option>
+                    <option value="SA">Sat</option>
+                    <option value="SU">Sun</option>
+                </select>
+            </div>
+            <small><em>"On day" defaults to the start date's day if blank.</em></small>
+        </div>
+
+        <label>
+            Time
+            <input name="recurrence_time" type="time" value="09:00" required />
+        </label>
+        <label>
+            Time zone
+            <input name="recurrence_timezone" value="UTC" placeholder="America/New_York" required />
+        </label>
+        <label>
+            Start date
+            <input name="recurrence_start_date" type="date" required />
+        </label>
+        <label>
+            Generate
+            <input name="generate_count" type="number" min="1" max="200" value="10" required />
+        </label>
+
         <button type="submit">Create</button>
     </form>
 
@@ -25,7 +98,7 @@
         {% for s in series %}
         <li>
             <a href="/series/{{ s.id }}">{{ s.title }}</a>
-            <small>(every {{ s.default_interval_days }} days)</small>
+            <small>({{ series_recurrence.get(s.id, "") }})</small>
         </li>
         {% else %}
         <li><em>No series yet. Create one above.</em></li>

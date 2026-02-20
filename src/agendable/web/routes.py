@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -22,6 +23,7 @@ from agendable.models import (
     Task,
     User,
 )
+from agendable.recurrence import build_rrule, describe_recurrence, generate_datetimes
 from agendable.repos import (
     AgendaItemRepository,
     ExternalIdentityRepository,
@@ -46,6 +48,30 @@ def _parse_dt(value: str) -> datetime:
     return dt
 
 
+def _parse_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date") from exc
+
+
+def _parse_time(value: str) -> time:
+    try:
+        return time.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid time") from exc
+
+
+def _parse_timezone(value: str) -> ZoneInfo:
+    name = value.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Invalid timezone")
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(status_code=400, detail="Unknown timezone") from exc
+
+
 router = APIRouter()
 
 templates_dir = Path(__file__).resolve().parent / "templates"
@@ -63,15 +89,29 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)) 
         current_user = None
 
     series: list[MeetingSeries] = []
+    series_recurrence: dict[uuid.UUID, str] = {}
     if current_user is not None:
         series_repo = MeetingSeriesRepository(session)
         series = await series_repo.list_for_owner(current_user.id)
+        series_recurrence = {
+            s.id: (
+                describe_recurrence(
+                    rrule=s.recurrence_rrule,
+                    dtstart=s.recurrence_dtstart,
+                    timezone=s.recurrence_timezone,
+                )
+                if s.recurrence_rrule
+                else f"Every {s.default_interval_days} days"
+            )
+            for s in series
+        }
 
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "series": series,
+            "series_recurrence": series_recurrence,
             "current_user": current_user,
         },
     )
@@ -208,16 +248,88 @@ async def logout(request: Request) -> RedirectResponse:
 @router.post("/series", response_class=RedirectResponse)
 async def create_series(
     title: str = Form(...),
-    default_interval_days: int = Form(7),
+    recurrence_start_date: str = Form(...),
+    recurrence_time: str = Form(...),
+    recurrence_timezone: str = Form("UTC"),
+    recurrence_freq: str = Form(...),
+    recurrence_interval: int = Form(1),
+    weekly_byday: list[str] = Form([]),
+    monthly_mode: str = Form("monthday"),
+    monthly_bymonthday: str | None = Form(None),
+    monthly_byday: str | None = Form(None),
+    monthly_bysetpos: list[int] = Form([]),
+    generate_count: int = Form(10),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
+    if generate_count < 1 or generate_count > 200:
+        raise HTTPException(status_code=400, detail="generate_count must be between 1 and 200")
+
+    if recurrence_interval < 1 or recurrence_interval > 365:
+        raise HTTPException(status_code=400, detail="recurrence_interval must be between 1 and 365")
+
+    start_date = _parse_date(recurrence_start_date)
+    start_time = _parse_time(recurrence_time)
+    tz = _parse_timezone(recurrence_timezone)
+    dtstart = datetime.combine(start_date, start_time).replace(tzinfo=tz)
+
+    bymonthday: int | None
+    if monthly_bymonthday is None or not monthly_bymonthday.strip():
+        bymonthday = None
+    else:
+        try:
+            bymonthday = int(monthly_bymonthday)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid monthly day") from exc
+
+    try:
+        normalized_rrule = build_rrule(
+            freq=recurrence_freq,
+            interval=recurrence_interval,
+            dtstart=dtstart,
+            weekly_byday=weekly_byday,
+            monthly_mode=monthly_mode,
+            monthly_bymonthday=bymonthday,
+            monthly_byday=monthly_byday,
+            monthly_bysetpos=monthly_bysetpos,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid recurrence settings") from exc
+
     series = MeetingSeries(
         owner_user_id=current_user.id,
         title=title,
-        default_interval_days=default_interval_days,
+        default_interval_days=7,
+        recurrence_rrule=normalized_rrule,
+        recurrence_dtstart=dtstart,
+        recurrence_timezone=recurrence_timezone.strip(),
     )
     session.add(series)
+
+    # Ensure `series.id` is available before creating occurrences.
+    await session.flush()
+
+    try:
+        scheduled = generate_datetimes(
+            rrule=normalized_rrule, dtstart=dtstart, count=generate_count
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid recurrence") from exc
+
+    if not scheduled:
+        raise HTTPException(status_code=400, detail="RRULE produced no occurrences")
+
+    session.add_all(
+        [
+            MeetingOccurrence(
+                series_id=series.id,
+                scheduled_at=dt.astimezone(UTC),
+                notes="",
+            )
+            for dt in scheduled
+        ]
+    )
+
     await session.commit()
 
     return RedirectResponse(url="/", status_code=303)
@@ -253,6 +365,15 @@ async def series_detail(
         "series_detail.html",
         {
             "series": series,
+            "recurrence_label": (
+                describe_recurrence(
+                    rrule=series.recurrence_rrule,
+                    dtstart=series.recurrence_dtstart,
+                    timezone=series.recurrence_timezone,
+                )
+                if series.recurrence_rrule
+                else f"Every {series.default_interval_days} days"
+            ),
             "occurrences": occurrences,
             "active_occurrence": active_occurrence,
             "tasks": tasks,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
 import pytest
 from httpx import AsyncClient
@@ -26,7 +25,15 @@ async def _create_series(
 ) -> MeetingSeries:
     resp = await client.post(
         "/series",
-        data={"title": title, "default_interval_days": 7},
+        data={
+            "title": title,
+            "recurrence_start_date": "2030-01-01",
+            "recurrence_time": "09:00",
+            "recurrence_timezone": "UTC",
+            "recurrence_freq": "DAILY",
+            "recurrence_interval": 1,
+            "generate_count": 1,
+        },
         follow_redirects=True,
     )
     assert resp.status_code == 200
@@ -91,20 +98,19 @@ async def test_agenda_add_and_toggle_is_scoped(
 
     series = await _create_series(client, db_session, title=f"Agenda {uuid.uuid4()}")
 
-    # Create an occurrence (datetime-local input format).
-    dt_local = datetime(2030, 1, 1, 9, 0).isoformat(timespec="minutes")
-    resp = await client.post(
-        f"/series/{series.id}/occurrences",
-        data={"scheduled_at": dt_local},
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
-
+    # Use the auto-generated occurrence.
     occ = (
-        await db_session.execute(
-            select(MeetingOccurrence).where(MeetingOccurrence.series_id == series.id)
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
         )
-    ).scalar_one()
+        .scalars()
+        .first()
+    )
+    assert occ is not None
 
     resp = await client.post(
         f"/occurrences/{occ.id}/agenda",
