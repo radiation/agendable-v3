@@ -9,7 +9,6 @@ from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
@@ -22,6 +21,14 @@ from agendable.models import (
     MeetingSeries,
     Task,
     User,
+)
+from agendable.repos import (
+    AgendaItemRepository,
+    ExternalIdentityRepository,
+    MeetingOccurrenceRepository,
+    MeetingSeriesRepository,
+    TaskRepository,
+    UserRepository,
 )
 from agendable.settings import get_settings
 from agendable.sso_google import build_oauth, google_enabled
@@ -57,12 +64,8 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)) 
 
     series: list[MeetingSeries] = []
     if current_user is not None:
-        result = await session.execute(
-            select(MeetingSeries)
-            .where(MeetingSeries.owner_user_id == current_user.id)
-            .order_by(MeetingSeries.created_at.desc())
-        )
-        series = list(result.scalars().all())
+        series_repo = MeetingSeriesRepository(session)
+        series = await series_repo.list_for_owner(current_user.id)
 
     return templates.TemplateResponse(
         request,
@@ -96,8 +99,8 @@ async def login(
 ) -> Response:
     normalized_email = email.strip().lower()
 
-    result = await session.execute(select(User).where(User.email == normalized_email))
-    user = result.scalar_one_or_none()
+    users = UserRepository(session)
+    user = await users.get_by_email(normalized_email)
 
     if user is None:
         user = User(
@@ -171,22 +174,17 @@ async def google_callback(
                 status_code=403,
             )
 
-    ext_result = await session.execute(
-        select(ExternalIdentity).where(
-            ExternalIdentity.provider == "google",
-            ExternalIdentity.subject == sub,
-        )
-    )
-    ext = ext_result.scalar_one_or_none()
+    ext_repo = ExternalIdentityRepository(session)
+    ext = await ext_repo.get_by_provider_subject("google", sub)
 
     if ext is not None:
-        user_result = await session.execute(select(User).where(User.id == ext.user_id))
-        user = user_result.scalar_one_or_none()
+        users = UserRepository(session)
+        user = await users.get_by_id(ext.user_id)
         if user is None:
             return RedirectResponse(url="/login", status_code=303)
     else:
-        user_result = await session.execute(select(User).where(User.email == email))
-        user = user_result.scalar_one_or_none()
+        users = UserRepository(session)
+        user = await users.get_by_email(email)
         if user is None:
             user = User(email=email, display_name=name, password_hash=None)
             session.add(user)
@@ -232,38 +230,23 @@ async def series_detail(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    series_result = await session.execute(
-        select(MeetingSeries).where(
-            MeetingSeries.id == series_id,
-            MeetingSeries.owner_user_id == current_user.id,
-        )
-    )
-    series = series_result.scalar_one_or_none()
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.get_for_owner(series_id, current_user.id)
     if series is None:
         raise HTTPException(status_code=404)
 
-    occ_result = await session.execute(
-        select(MeetingOccurrence)
-        .where(MeetingOccurrence.series_id == series_id)
-        .order_by(MeetingOccurrence.scheduled_at.desc())
-    )
-    occurrences = list(occ_result.scalars().all())
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrences = await occ_repo.list_for_series(series_id)
 
-    tasks_result = await session.execute(
-        select(Task).where(Task.series_id == series_id).order_by(Task.created_at.desc())
-    )
-    tasks = list(tasks_result.scalars().all())
+    tasks_repo = TaskRepository(session)
+    tasks = await tasks_repo.list_for_series(series_id)
 
     # Load agenda for most recent occurrence (if any)
     agenda_items: list[AgendaItem] = []
     active_occurrence: MeetingOccurrence | None = occurrences[0] if occurrences else None
     if active_occurrence is not None:
-        agenda_result = await session.execute(
-            select(AgendaItem)
-            .where(AgendaItem.occurrence_id == active_occurrence.id)
-            .order_by(AgendaItem.created_at.desc())
-        )
-        agenda_items = list(agenda_result.scalars().all())
+        agenda_repo = AgendaItemRepository(session)
+        agenda_items = await agenda_repo.list_for_occurrence(active_occurrence.id)
 
     return templates.TemplateResponse(
         request,
@@ -286,13 +269,8 @@ async def create_occurrence(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    series_result = await session.execute(
-        select(MeetingSeries).where(
-            MeetingSeries.id == series_id,
-            MeetingSeries.owner_user_id == current_user.id,
-        )
-    )
-    if series_result.scalar_one_or_none() is None:
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
     occ = MeetingOccurrence(series_id=series_id, scheduled_at=_parse_dt(scheduled_at), notes="")
@@ -309,13 +287,8 @@ async def create_task(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    series_result = await session.execute(
-        select(MeetingSeries).where(
-            MeetingSeries.id == series_id,
-            MeetingSeries.owner_user_id == current_user.id,
-        )
-    )
-    if series_result.scalar_one_or_none() is None:
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
     task = Task(series_id=series_id, title=title)
@@ -330,16 +303,13 @@ async def toggle_task(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    result = await session.execute(select(Task).where(Task.id == task_id))
-    task = result.scalar_one_or_none()
+    tasks_repo = TaskRepository(session)
+    task = await tasks_repo.get_by_id(task_id)
     if task is None:
         raise HTTPException(status_code=404)
 
-    series_result = await session.execute(
-        select(MeetingSeries).where(MeetingSeries.id == task.series_id)
-    )
-    series = series_result.scalar_one_or_none()
-    if series is None or series.owner_user_id != current_user.id:
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(task.series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
     task.is_done = not task.is_done
@@ -354,20 +324,13 @@ async def add_agenda_item(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    occ_result = await session.execute(
-        select(MeetingOccurrence).where(MeetingOccurrence.id == occurrence_id)
-    )
-    occurrence = occ_result.scalar_one_or_none()
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(occurrence_id)
     if occurrence is None:
         raise HTTPException(status_code=404)
 
-    series_result = await session.execute(
-        select(MeetingSeries).where(
-            MeetingSeries.id == occurrence.series_id,
-            MeetingSeries.owner_user_id == current_user.id,
-        )
-    )
-    if series_result.scalar_one_or_none() is None:
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
     item = AgendaItem(occurrence_id=occurrence_id, body=body)
@@ -383,23 +346,20 @@ async def toggle_agenda_item(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    item_result = await session.execute(select(AgendaItem).where(AgendaItem.id == item_id))
-    item = item_result.scalar_one_or_none()
+    agenda_repo = AgendaItemRepository(session)
+    item = await agenda_repo.get_by_id(item_id)
     if item is None:
         raise HTTPException(status_code=404)
 
     item.is_done = not item.is_done
 
-    occ_result = await session.execute(
-        select(MeetingOccurrence).where(MeetingOccurrence.id == item.occurrence_id)
-    )
-    occurrence = occ_result.scalar_one()
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(item.occurrence_id)
+    if occurrence is None:
+        raise HTTPException(status_code=404)
 
-    series_result = await session.execute(
-        select(MeetingSeries).where(MeetingSeries.id == occurrence.series_id)
-    )
-    series = series_result.scalar_one_or_none()
-    if series is None or series.owner_user_id != current_user.id:
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
     await session.commit()
