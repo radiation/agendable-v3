@@ -1,25 +1,28 @@
 from __future__ import annotations
 
 import uuid
-from typing import cast
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHash, VerificationError, VerifyMismatchError
 from fastapi import Depends, HTTPException, Request
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db import get_session
 from agendable.models import User
 
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_password_hasher = PasswordHasher()
 
 
 def hash_password(password: str) -> str:
-    return cast(str, _pwd_context.hash(password))
+    return _password_hasher.hash(password)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return cast(bool, _pwd_context.verify(password, password_hash))
+    try:
+        return _password_hasher.verify(password_hash, password)
+    except (VerifyMismatchError, InvalidHash, VerificationError):
+        return False
 
 
 def get_current_user_id(request: Request) -> uuid.UUID | None:
