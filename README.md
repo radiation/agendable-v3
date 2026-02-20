@@ -25,6 +25,15 @@ Tables are created on app startup (for now). In production we’ll likely move t
 - Initialize DB (creates tables): `uv run agendable init-db`
 - Run reminder sender stub: `uv run agendable run-reminders`
 
+### Migrations (Alembic)
+
+Recommended workflow (especially for Postgres / long-lived environments):
+
+- Apply migrations: `uv run alembic upgrade head`
+- Create a new migration (autogenerate): `uv run alembic revision --autogenerate -m "..."`
+
+In long-lived environments, set `AGENDABLE_AUTO_CREATE_DB=false` and use Alembic instead of startup-time `create_all()`.
+
 ### Dev tooling
 
 - Format: `uv run ruff format .`

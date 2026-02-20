@@ -22,6 +22,7 @@ agendable = "agendable.cli:main"
 
 [dependency-groups]
 dev = [
+	"alembic>=1.13",
 	"pre-commit>=3.7",
 	"mypy>=1.10",
 	"ruff>=0.6",
@@ -39,6 +40,7 @@ packages = ["src/agendable"]
 line-length = 100
 target-version = "py313"
 src = ["src"]
+extend-exclude = ["migrations"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -72,6 +74,7 @@ strict = true
 warn_unreachable = true
 pretty = true
 show_error_codes = true
+exclude = "^(migrations/|alembic/)"
 plugins = [
 	"sqlalchemy.ext.mypy.plugin",
 ]

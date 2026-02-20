@@ -9,14 +9,18 @@ from fastapi.staticfiles import StaticFiles
 
 from agendable.db import engine
 from agendable.models import Base
+from agendable.settings import get_settings
 from agendable.web.routes import router as web_router
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        if settings.auto_create_db:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
         yield
 
     app = FastAPI(lifespan=lifespan)

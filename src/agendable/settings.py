@@ -9,6 +9,10 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./agendable.db"
 
+    # Local-dev convenience. In long-lived environments you should run Alembic migrations
+    # and set this to false.
+    auto_create_db: bool = True
+
     # Reminder integrations (optional for now)
     slack_webhook_url: SecretStr | None = None
 
