@@ -439,9 +439,19 @@ async def series_detail(
     tasks_repo = TaskRepository(session)
     tasks = await tasks_repo.list_for_series(series_id)
 
-    # Load agenda for most recent occurrence (if any)
+    # Pick the next upcoming occurrence as active (fallback to most recent past).
     agenda_items: list[AgendaItem] = []
-    active_occurrence: MeetingOccurrence | None = occurrences[0] if occurrences else None
+    active_occurrence: MeetingOccurrence | None = None
+    now = datetime.now(UTC)
+    for o in occurrences:
+        scheduled_at = o.scheduled_at
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=UTC)
+        if scheduled_at >= now:
+            active_occurrence = o
+            break
+    if active_occurrence is None and occurrences:
+        active_occurrence = occurrences[-1]
     if active_occurrence is not None:
         agenda_repo = AgendaItemRepository(session)
         agenda_items = await agenda_repo.list_for_occurrence(active_occurrence.id)

@@ -17,7 +17,7 @@ class MeetingOccurrenceRepository(BaseRepository[MeetingOccurrence]):
         result = await self.session.execute(
             select(MeetingOccurrence)
             .where(MeetingOccurrence.series_id == series_id)
-            .order_by(MeetingOccurrence.scheduled_at.desc())
+            .order_by(MeetingOccurrence.scheduled_at.asc())
         )
         return list(result.scalars().all())
 
