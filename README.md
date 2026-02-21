@@ -13,6 +13,31 @@ First time: go to `/login` and sign in (new users are auto-provisioned in the MV
 
 SQLite is the default via `AGENDABLE_DATABASE_URL=sqlite+aiosqlite:///./agendable.db`.
 
+### Run with Docker + Postgres (live reload)
+
+First time (or after new migrations):
+
+- Start Postgres + apply migrations: `docker compose run --rm web alembic upgrade head`
+
+Then run the app:
+
+- Build + start: `docker compose up --build`
+- Open: `http://127.0.0.1:8000/`
+- Stop: `docker compose down`
+
+The compose setup includes:
+
+- Postgres (`postgres:17`) with a persistent Docker volume (`postgres_data`)
+- A bind mount from local repo to container (`.:/app`)
+- Live reload command in the app container:
+	- `uvicorn agendable.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src`
+
+So local code changes under `src/` reload automatically without rebuilding the image.
+
+If dependencies change, rebuild once:
+
+- `docker compose up --build`
+
 ### Run in a long-lived environment (Postgres)
 
 Set `AGENDABLE_DATABASE_URL` to an asyncpg URL, for example:

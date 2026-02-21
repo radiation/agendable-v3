@@ -18,11 +18,27 @@ depends_on = None
 
 
 def upgrade() -> None:
+    role_enum = sa.Enum("user", "admin", name="userrole")
+    bind = op.get_bind()
+
+    if bind.dialect.name == "postgresql":
+        role_enum.create(bind, checkfirst=True)
+        op.add_column(
+            "users",
+            sa.Column(
+                "role",
+                role_enum,
+                nullable=False,
+                server_default="user",
+            ),
+        )
+        return
+
     with op.batch_alter_table("users") as batch:
         batch.add_column(
             sa.Column(
                 "role",
-                sa.Enum("user", "admin", name="userrole"),
+                role_enum,
                 nullable=False,
                 server_default="user",
             )
@@ -30,5 +46,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    role_enum = sa.Enum("user", "admin", name="userrole")
+    bind = op.get_bind()
+
+    if bind.dialect.name == "postgresql":
+        op.drop_column("users", "role")
+        role_enum.drop(bind, checkfirst=True)
+        return
+
     with op.batch_alter_table("users") as batch:
         batch.drop_column("role")

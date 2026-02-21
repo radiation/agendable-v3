@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: agendable
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d agendable" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      AGENDABLE_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/agendable
+      AGENDABLE_AUTO_CREATE_DB: "false"
+      AGENDABLE_SESSION_SECRET: dev-only-change-me
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ./:/app
+    command: uvicorn agendable.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
+
+volumes:
+  postgres_data:
