@@ -7,7 +7,7 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from agendable.models import Base
+from agendable.db.models import Base
 from agendable.settings import get_settings
 
 config = context.config

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db import get_session
-from agendable.models import User
+from agendable.db.models import User
 
 _password_hasher = PasswordHasher()
 

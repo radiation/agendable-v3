@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from agendable.db import SessionMaker, engine
-from agendable.models import Base, Reminder
+from agendable.db.models import Base, Reminder
 
 
 async def _init_db() -> None:

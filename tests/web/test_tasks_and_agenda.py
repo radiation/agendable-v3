@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import agendable.db as db
-from agendable.models import AgendaItem, MeetingOccurrence, MeetingSeries, Task, User
+from agendable.db.models import AgendaItem, MeetingOccurrence, MeetingSeries, Task, User
 
 
 async def _login(client: AsyncClient, email: str, password: str) -> None:

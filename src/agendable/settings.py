@@ -9,8 +9,7 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./agendable.db"
 
-    # Local-dev convenience. In long-lived environments you should run Alembic migrations
-    # and set this to false.
+    # For local development
     auto_create_db: bool = False
 
     # Session cookie auth (MVP). In production, override via env.
@@ -19,11 +18,6 @@ class Settings(BaseSettings):
 
     # Reminder integrations (optional for now)
     slack_webhook_url: SecretStr | None = None
-
-    # Placeholder for future auth/SSO configuration.
-    # For example:
-    # - OIDC / OAuth: issuer, client_id, client_secret
-    # - SAML: metadata_url, entity_id, x509 cert
 
     # Google OIDC (optional)
     google_client_id: str | None = None

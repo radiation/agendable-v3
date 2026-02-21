@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from agendable.models import Base
+from agendable.db.models import Base
 
 ModelT = TypeVar("ModelT", bound=Base)
 

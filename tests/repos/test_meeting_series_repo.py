@@ -6,9 +6,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import agendable.db as db
-from agendable.models import MeetingSeries, User
-from agendable.repos.meeting_series import MeetingSeriesRepository
-from agendable.repos.users import UserRepository
+from agendable.db.models import MeetingSeries, User
+from agendable.db.repos.meeting_series import MeetingSeriesRepository
+from agendable.db.repos.users import UserRepository
 
 
 @pytest.mark.asyncio

@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import agendable.db as db
-from agendable.models import User
-from agendable.repos.users import UserRepository
+from agendable.db.models import User
+from agendable.db.repos.users import UserRepository
 
 
 async def _new_user(email: str) -> User:

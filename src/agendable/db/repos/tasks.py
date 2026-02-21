@@ -5,8 +5,8 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.models import Task
-from agendable.repos.base import BaseRepository
+from agendable.db.models import Task
+from agendable.db.repos.base import BaseRepository
 
 
 class TaskRepository(BaseRepository[Task]):

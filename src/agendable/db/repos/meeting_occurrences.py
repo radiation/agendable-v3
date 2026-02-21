@@ -5,8 +5,8 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.models import MeetingOccurrence
-from agendable.repos.base import BaseRepository
+from agendable.db.models import MeetingOccurrence
+from agendable.db.repos.base import BaseRepository
 
 
 class MeetingOccurrenceRepository(BaseRepository[MeetingOccurrence]):

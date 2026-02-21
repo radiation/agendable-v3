@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.models import MeetingOccurrence, MeetingSeries, User
+from agendable.db.models import MeetingOccurrence, MeetingSeries, User
 
 
 async def _login(client: AsyncClient, email: str, password: str) -> None:

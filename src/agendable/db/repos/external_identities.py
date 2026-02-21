@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.models import ExternalIdentity
-from agendable.repos.base import BaseRepository
+from agendable.db.models import ExternalIdentity
+from agendable.db.repos.base import BaseRepository
 
 
 class ExternalIdentityRepository(BaseRepository[ExternalIdentity]):

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import (
 
 import agendable.db as db
 from agendable.app import create_app
-from agendable.models import Base
+from agendable.db.models import Base
 
 
 @pytest.fixture

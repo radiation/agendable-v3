@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from agendable.db import engine
-from agendable.models import Base
+from agendable.db.models import Base
 from agendable.settings import get_settings
 from agendable.web.routes import router as web_router
 
