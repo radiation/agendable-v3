@@ -436,11 +436,7 @@ async def series_detail(
     occ_repo = MeetingOccurrenceRepository(session)
     occurrences = await occ_repo.list_for_series(series_id)
 
-    tasks_repo = TaskRepository(session)
-    tasks = await tasks_repo.list_for_series(series_id)
-
     # Pick the next upcoming occurrence as active (fallback to most recent past).
-    agenda_items: list[AgendaItem] = []
     active_occurrence: MeetingOccurrence | None = None
     now = datetime.now(UTC)
     for o in occurrences:
@@ -452,9 +448,6 @@ async def series_detail(
             break
     if active_occurrence is None and occurrences:
         active_occurrence = occurrences[-1]
-    if active_occurrence is not None:
-        agenda_repo = AgendaItemRepository(session)
-        agenda_items = await agenda_repo.list_for_occurrence(active_occurrence.id)
 
     return templates.TemplateResponse(
         request,
@@ -472,6 +465,49 @@ async def series_detail(
             ),
             "occurrences": occurrences,
             "active_occurrence": active_occurrence,
+            "current_user": current_user,
+        },
+    )
+
+
+@router.get("/occurrences/{occurrence_id}", response_class=HTMLResponse)
+async def occurrence_detail(
+    request: Request,
+    occurrence_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> HTMLResponse:
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(occurrence_id)
+    if occurrence is None:
+        raise HTTPException(status_code=404)
+
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.get_for_owner(occurrence.series_id, current_user.id)
+    if series is None:
+        raise HTTPException(status_code=404)
+
+    tasks_repo = TaskRepository(session)
+    tasks = await tasks_repo.list_for_occurrence(occurrence.id)
+
+    agenda_repo = AgendaItemRepository(session)
+    agenda_items = await agenda_repo.list_for_occurrence(occurrence.id)
+
+    return templates.TemplateResponse(
+        request,
+        "occurrence_detail.html",
+        {
+            "series": series,
+            "recurrence_label": (
+                describe_recurrence(
+                    rrule=series.recurrence_rrule,
+                    dtstart=series.recurrence_dtstart,
+                    timezone=series.recurrence_timezone,
+                )
+                if series.recurrence_rrule
+                else f"Every {series.default_interval_days} days"
+            ),
+            "occurrence": occurrence,
             "tasks": tasks,
             "agenda_items": agenda_items,
             "current_user": current_user,
@@ -497,21 +533,26 @@ async def create_occurrence(
     return RedirectResponse(url=f"/series/{series_id}", status_code=303)
 
 
-@router.post("/series/{series_id}/tasks", response_class=RedirectResponse)
+@router.post("/occurrences/{occurrence_id}/tasks", response_class=RedirectResponse)
 async def create_task(
-    series_id: uuid.UUID,
+    occurrence_id: uuid.UUID,
     title: str = Form(...),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    series_repo = MeetingSeriesRepository(session)
-    if await series_repo.get_for_owner(series_id, current_user.id) is None:
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(occurrence_id)
+    if occurrence is None:
         raise HTTPException(status_code=404)
 
-    task = Task(series_id=series_id, title=title)
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
+        raise HTTPException(status_code=404)
+
+    task = Task(occurrence_id=occurrence_id, title=title)
     session.add(task)
     await session.commit()
-    return RedirectResponse(url=f"/series/{series_id}", status_code=303)
+    return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
 
 
 @router.post("/tasks/{task_id}/toggle", response_class=RedirectResponse)
@@ -525,13 +566,18 @@ async def toggle_task(
     if task is None:
         raise HTTPException(status_code=404)
 
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(task.occurrence_id)
+    if occurrence is None:
+        raise HTTPException(status_code=404)
+
     series_repo = MeetingSeriesRepository(session)
-    if await series_repo.get_for_owner(task.series_id, current_user.id) is None:
+    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
     task.is_done = not task.is_done
     await session.commit()
-    return RedirectResponse(url=f"/series/{task.series_id}", status_code=303)
+    return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
 
 
 @router.post("/occurrences/{occurrence_id}/agenda", response_class=RedirectResponse)
@@ -554,7 +600,7 @@ async def add_agenda_item(
     session.add(item)
     await session.commit()
 
-    return RedirectResponse(url=f"/series/{occurrence.series_id}", status_code=303)
+    return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
 
 
 @router.post("/agenda/{item_id}/toggle", response_class=RedirectResponse)
@@ -580,4 +626,4 @@ async def toggle_agenda_item(
         raise HTTPException(status_code=404)
 
     await session.commit()
-    return RedirectResponse(url=f"/series/{occurrence.series_id}", status_code=303)
+    return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)

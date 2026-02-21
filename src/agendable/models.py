@@ -93,7 +93,6 @@ class MeetingSeries(Base):
     occurrences: Mapped[list[MeetingOccurrence]] = relationship(
         back_populates="series", cascade="all, delete-orphan"
     )
-    tasks: Mapped[list[Task]] = relationship(back_populates="series", cascade="all, delete-orphan")
 
 
 class MeetingOccurrence(Base):
@@ -111,6 +110,9 @@ class MeetingOccurrence(Base):
 
     series: Mapped[MeetingSeries] = relationship(back_populates="occurrences")
     agenda_items: Mapped[list[AgendaItem]] = relationship(
+        back_populates="occurrence", cascade="all, delete-orphan"
+    )
+    tasks: Mapped[list[Task]] = relationship(
         back_populates="occurrence", cascade="all, delete-orphan"
     )
     reminders: Mapped[list[Reminder]] = relationship(
@@ -140,7 +142,9 @@ class Task(Base):
     __tablename__ = "task"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    series_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("meeting_series.id"), index=True)
+    occurrence_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("meeting_occurrence.id"), index=True
+    )
 
     title: Mapped[str] = mapped_column(String(300))
     is_done: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -149,7 +153,7 @@ class Task(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
-    series: Mapped[MeetingSeries] = relationship(back_populates="tasks")
+    occurrence: Mapped[MeetingOccurrence] = relationship(back_populates="tasks")
 
 
 class Reminder(Base):

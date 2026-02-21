@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Agendable — {{ series.title }} (meeting){% endblock %}
+
+{% block content %}
+<p><a href="/series/{{ series.id }}">← Back to series</a></p>
+
+<section>
+    <h2>{{ series.title }}</h2>
+    <p><small>Repeats: {{ recurrence_label }}</small></p>
+    <p><strong>Scheduled:</strong> {{ occurrence.scheduled_at }}</p>
+</section>
+
+<hr />
+
+<section>
+    <h3>Tasks</h3>
+
+    <form method="post" action="/occurrences/{{ occurrence.id }}/tasks"
+        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+        <label>
+            Task
+            <input name="title" required />
+        </label>
+        <button type="submit">Add task</button>
+    </form>
+
+    <ul>
+        {% for t in tasks %}
+        <li>
+            <form method="post" action="/tasks/{{ t.id }}/toggle" style="display:inline;">
+                <button type="submit">{% if t.is_done %}Undo{% else %}Done{% endif %}</button>
+            </form>
+            {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
+        </li>
+        {% else %}
+        <li><em>No tasks yet.</em></li>
+        {% endfor %}
+    </ul>
+</section>
+
+<hr />
+
+<section>
+    <h3>Agenda</h3>
+
+    <form method="post" action="/occurrences/{{ occurrence.id }}/agenda"
+        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+        <label>
+            Agenda item
+            <input name="body" required />
+        </label>
+        <button type="submit">Add</button>
+    </form>
+
+    <ul>
+        {% for a in agenda_items %}
+        <li>
+            <form method="post" action="/agenda/{{ a.id }}/toggle" style="display:inline;">
+                <button type="submit">{% if a.is_done %}Undo{% else %}Done{% endif %}</button>
+            </form>
+            {% if a.is_done %}<s>{{ a.body }}</s>{% else %}{{ a.body }}{% endif %}
+        </li>
+        {% else %}
+        <li><em>No agenda items yet.</em></li>
+        {% endfor %}
+    </ul>
+</section>
+{% endblock %}

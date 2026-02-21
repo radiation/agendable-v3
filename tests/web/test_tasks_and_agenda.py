@@ -66,8 +66,22 @@ async def test_task_create_and_toggle_is_scoped(
 
     series = await _create_series(client, db_session, title=f"Tasks {uuid.uuid4()}")
 
+    # Use the auto-generated occurrence.
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
     resp = await client.post(
-        f"/series/{series.id}/tasks",
+        f"/occurrences/{occ.id}/tasks",
         data={"title": "Do the thing"},
         follow_redirects=True,
     )
@@ -75,7 +89,7 @@ async def test_task_create_and_toggle_is_scoped(
 
     task = (
         await db_session.execute(
-            select(Task).where(Task.series_id == series.id, Task.title == "Do the thing")
+            select(Task).where(Task.occurrence_id == occ.id, Task.title == "Do the thing")
         )
     ).scalar_one()
     assert task.is_done is False

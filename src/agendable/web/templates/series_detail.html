@@ -27,7 +27,7 @@
     <ul>
         {% for o in occurrences %}
         <li>
-            {{ o.scheduled_at }}
+            <a href="/occurrences/{{ o.id }}">{{ o.scheduled_at }}</a>
             {% if active_occurrence and o.id == active_occurrence.id %}
             <strong>(active)</strong>
             {% endif %}
@@ -36,65 +36,5 @@
         <li><em>No meetings yet.</em></li>
         {% endfor %}
     </ul>
-</section>
-
-<hr />
-
-<section>
-    <h3>Series tasks</h3>
-
-    <form method="post" action="/series/{{ series.id }}/tasks"
-        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
-        <label>
-            Task
-            <input name="title" required />
-        </label>
-        <button type="submit">Add task</button>
-    </form>
-
-    <ul>
-        {% for t in tasks %}
-        <li>
-            <form method="post" action="/tasks/{{ t.id }}/toggle" style="display:inline;">
-                <button type="submit">{% if t.is_done %}Undo{% else %}Done{% endif %}</button>
-            </form>
-            {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
-        </li>
-        {% else %}
-        <li><em>No tasks yet.</em></li>
-        {% endfor %}
-    </ul>
-</section>
-
-<hr />
-
-<section>
-    <h3>Agenda (active meeting)</h3>
-
-    {% if not active_occurrence %}
-    <p><em>Create a meeting above to add agenda items.</em></p>
-    {% else %}
-    <form method="post" action="/occurrences/{{ active_occurrence.id }}/agenda"
-        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
-        <label>
-            Agenda item
-            <input name="body" required />
-        </label>
-        <button type="submit">Add</button>
-    </form>
-
-    <ul>
-        {% for a in agenda_items %}
-        <li>
-            <form method="post" action="/agenda/{{ a.id }}/toggle" style="display:inline;">
-                <button type="submit">{% if a.is_done %}Undo{% else %}Done{% endif %}</button>
-            </form>
-            {% if a.is_done %}<s>{{ a.body }}</s>{% else %}{{ a.body }}{% endif %}
-        </li>
-        {% else %}
-        <li><em>No agenda items yet.</em></li>
-        {% endfor %}
-    </ul>
-    {% endif %}
 </section>
 {% endblock %}
