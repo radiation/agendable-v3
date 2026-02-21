@@ -41,6 +41,10 @@ class User(Base):
     )
 
     meeting_series: Mapped[list[MeetingSeries]] = relationship(back_populates="owner")
+    assigned_tasks: Mapped[list[Task]] = relationship(back_populates="assignee")
+    attendance: Mapped[list[MeetingOccurrenceAttendee]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     external_identities: Mapped[list[ExternalIdentity]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -117,9 +121,36 @@ class MeetingOccurrence(Base):
     tasks: Mapped[list[Task]] = relationship(
         back_populates="occurrence", cascade="all, delete-orphan"
     )
+    attendees: Mapped[list[MeetingOccurrenceAttendee]] = relationship(
+        back_populates="occurrence", cascade="all, delete-orphan"
+    )
     reminders: Mapped[list[Reminder]] = relationship(
         back_populates="occurrence", cascade="all, delete-orphan"
     )
+
+
+class MeetingOccurrenceAttendee(Base):
+    __tablename__ = "meeting_occurrence_attendee"
+    __table_args__ = (
+        UniqueConstraint(
+            "occurrence_id",
+            "user_id",
+            name="uq_meeting_occurrence_attendee_occurrence_user",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    occurrence_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("meeting_occurrence.id"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    occurrence: Mapped[MeetingOccurrence] = relationship(back_populates="attendees")
+    user: Mapped[User] = relationship(back_populates="attendance")
 
 
 class AgendaItem(Base):
@@ -147,6 +178,7 @@ class Task(Base):
     occurrence_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("meeting_occurrence.id"), index=True
     )
+    assigned_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
 
     title: Mapped[str] = mapped_column(String(300))
     is_done: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -156,6 +188,7 @@ class Task(Base):
     )
 
     occurrence: Mapped[MeetingOccurrence] = relationship(back_populates="tasks")
+    assignee: Mapped[User] = relationship(back_populates="assigned_tasks")
 
 
 class Reminder(Base):

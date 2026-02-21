@@ -94,6 +94,7 @@ async def test_task_create_and_toggle_is_scoped(
         )
     ).scalar_one()
     assert task.is_done is False
+    assert task.assigned_user_id == series.owner_user_id
     task_id = task.id
 
     resp = await client.post(f"/tasks/{task.id}/toggle", follow_redirects=True)
@@ -199,8 +200,18 @@ async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
     await db_session.commit()
     await db_session.refresh(second)
 
-    unfinished_task = Task(occurrence_id=first.id, title="Move me", is_done=False)
-    completed_task = Task(occurrence_id=first.id, title="Keep me", is_done=True)
+    unfinished_task = Task(
+        occurrence_id=first.id,
+        assigned_user_id=series.owner_user_id,
+        title="Move me",
+        is_done=False,
+    )
+    completed_task = Task(
+        occurrence_id=first.id,
+        assigned_user_id=series.owner_user_id,
+        title="Keep me",
+        is_done=True,
+    )
     unfinished_agenda = AgendaItem(occurrence_id=first.id, body="Move agenda", is_done=False)
     completed_agenda = AgendaItem(occurrence_id=first.id, body="Keep agenda", is_done=True)
     db_session.add_all([unfinished_task, completed_task, unfinished_agenda, completed_agenda])
@@ -239,3 +250,58 @@ async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
         ).scalar_one()
         assert moved_agenda.occurrence_id == second.id
         assert kept_agenda.occurrence_id == first.id
+
+
+@pytest.mark.asyncio
+async def test_task_assignment_requires_attendee(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _login(client, "alice@example.com", "pw-alice")
+
+    series = await _create_series(client, db_session, title=f"Assign {uuid.uuid4()}")
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    bob = User(email=f"bob-{uuid.uuid4()}@example.com", display_name="Bob", password_hash=None)
+    db_session.add(bob)
+    await db_session.commit()
+    await db_session.refresh(bob)
+
+    resp = await client.post(
+        f"/occurrences/{occ.id}/tasks",
+        data={"title": "Assigned task", "assigned_user_id": str(bob.id)},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+    resp = await client.post(
+        f"/occurrences/{occ.id}/attendees",
+        data={"email": bob.email},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    resp = await client.post(
+        f"/occurrences/{occ.id}/tasks",
+        data={"title": "Assigned task", "assigned_user_id": str(bob.id)},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    assigned_task = (
+        await db_session.execute(
+            select(Task).where(Task.occurrence_id == occ.id, Task.title == "Assigned task")
+        )
+    ).scalar_one()
+    assert assigned_task.assigned_user_id == bob.id
