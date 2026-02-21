@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Agendable — Profile{% endblock %}
+
+{% block content %}
+<p><a href="/">← Back</a></p>
+
+<section>
+    <h2>Profile</h2>
+    <ul>
+        <li><strong>Email:</strong> {{ user.email }}</li>
+        <li><strong>Display name:</strong> {{ user.display_name }}</li>
+        <li><strong>Created:</strong> {{ user.created_at }}</li>
+    </ul>
+</section>
+{% endblock %}

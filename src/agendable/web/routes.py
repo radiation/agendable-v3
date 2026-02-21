@@ -80,31 +80,27 @@ templates = Jinja2Templates(directory=str(templates_dir))
 oauth = build_oauth()
 
 
-@router.get("/", response_class=HTMLResponse)
-async def index(request: Request, session: AsyncSession = Depends(get_session)) -> HTMLResponse:
-    current_user: User | None
+@router.get("/", response_class=Response)
+async def index(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
     try:
         current_user = await require_user(request, session)
     except HTTPException:
-        current_user = None
+        return RedirectResponse(url="/login", status_code=303)
 
-    series: list[MeetingSeries] = []
-    series_recurrence: dict[uuid.UUID, str] = {}
-    if current_user is not None:
-        series_repo = MeetingSeriesRepository(session)
-        series = await series_repo.list_for_owner(current_user.id)
-        series_recurrence = {
-            s.id: (
-                describe_recurrence(
-                    rrule=s.recurrence_rrule,
-                    dtstart=s.recurrence_dtstart,
-                    timezone=s.recurrence_timezone,
-                )
-                if s.recurrence_rrule
-                else f"Every {s.default_interval_days} days"
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.list_for_owner(current_user.id)
+    series_recurrence = {
+        s.id: (
+            describe_recurrence(
+                rrule=s.recurrence_rrule,
+                dtstart=s.recurrence_dtstart,
+                timezone=s.recurrence_timezone,
             )
-            for s in series
-        }
+            if s.recurrence_rrule
+            else f"Every {s.default_interval_days} days"
+        )
+        for s in series
+    }
 
     return templates.TemplateResponse(
         request,
@@ -117,8 +113,14 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)) 
     )
 
 
-@router.get("/login", response_class=HTMLResponse)
-async def login_form(request: Request) -> HTMLResponse:
+@router.get("/login", response_class=Response)
+async def login_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
+    try:
+        _ = await require_user(request, session)
+        return RedirectResponse(url="/", status_code=303)
+    except HTTPException:
+        pass
+
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -143,26 +145,83 @@ async def login(
     user = await users.get_by_email(normalized_email)
 
     if user is None:
-        user = User(
-            email=normalized_email,
-            display_name=normalized_email,
-            password_hash=hash_password(password),
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "error": "Account not found. Create one first.",
+                "current_user": None,
+                "google_enabled": google_enabled(),
+            },
+            status_code=401,
         )
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
-    else:
-        if user.password_hash is None or not verify_password(password, user.password_hash):
-            return templates.TemplateResponse(
-                request,
-                "login.html",
-                {
-                    "error": "Invalid email or password",
-                    "current_user": None,
-                    "google_enabled": google_enabled(),
-                },
-                status_code=401,
-            )
+
+    if user.password_hash is None or not verify_password(password, user.password_hash):
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "error": "Invalid email or password",
+                "current_user": None,
+                "google_enabled": google_enabled(),
+            },
+            status_code=401,
+        )
+
+    request.session["user_id"] = str(user.id)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@router.get("/signup", response_class=Response)
+async def signup_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
+    try:
+        _ = await require_user(request, session)
+        return RedirectResponse(url="/", status_code=303)
+    except HTTPException:
+        pass
+
+    return templates.TemplateResponse(
+        request,
+        "signup.html",
+        {
+            "error": None,
+            "current_user": None,
+        },
+    )
+
+
+@router.post("/signup", response_class=HTMLResponse)
+async def signup(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    users = UserRepository(session)
+    existing = await users.get_by_email(normalized_email)
+    if existing is not None:
+        return templates.TemplateResponse(
+            request,
+            "signup.html",
+            {
+                "error": "Account already exists. Sign in instead.",
+                "current_user": None,
+            },
+            status_code=400,
+        )
+
+    user = User(
+        email=normalized_email,
+        display_name=normalized_email,
+        password_hash=hash_password(password),
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/", status_code=303)
@@ -194,7 +253,6 @@ async def google_callback(
     sub = str(userinfo.get("sub", ""))
     email = str(userinfo.get("email", "")).strip().lower()
     email_verified = bool(userinfo.get("email_verified"))
-    name = str(userinfo.get("name") or email)
 
     if not sub or not email or not email_verified:
         return RedirectResponse(url="/login", status_code=303)
@@ -226,10 +284,16 @@ async def google_callback(
         users = UserRepository(session)
         user = await users.get_by_email(email)
         if user is None:
-            user = User(email=email, display_name=name, password_hash=None)
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
+            return templates.TemplateResponse(
+                request,
+                "login.html",
+                {
+                    "error": "Account not found. Create one first.",
+                    "current_user": None,
+                    "google_enabled": google_enabled(),
+                },
+                status_code=403,
+            )
 
         ext = ExternalIdentity(user_id=user.id, provider="google", subject=sub, email=email)
         session.add(ext)
@@ -243,6 +307,28 @@ async def google_callback(
 async def logout(request: Request) -> RedirectResponse:
     request.session.clear()
     return RedirectResponse(url="/", status_code=303)
+
+
+@router.get("/profile", response_class=HTMLResponse)
+async def profile(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> HTMLResponse:
+    # Refresh from DB so fields reflect stored display_name, etc.
+    users = UserRepository(session)
+    user = await users.get_by_id(current_user.id)
+    if user is None:
+        raise HTTPException(status_code=404)
+
+    return templates.TemplateResponse(
+        request,
+        "profile.html",
+        {
+            "user": user,
+            "current_user": user,
+        },
+    )
 
 
 @router.post("/series", response_class=RedirectResponse)

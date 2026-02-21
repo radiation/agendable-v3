@@ -13,6 +13,14 @@ from agendable.models import AgendaItem, MeetingOccurrence, MeetingSeries, Task,
 
 async def _login(client: AsyncClient, email: str, password: str) -> None:
     resp = await client.post(
+        "/signup",
+        data={"email": email, "password": password},
+        follow_redirects=True,
+    )
+    if resp.status_code == 200:
+        return
+
+    resp = await client.post(
         "/login",
         data={"email": email, "password": password},
         follow_redirects=True,

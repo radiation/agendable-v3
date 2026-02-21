@@ -6,9 +6,9 @@ from httpx import AsyncClient
 
 @pytest.mark.asyncio
 async def test_existing_user_wrong_password_stays_401(client: AsyncClient) -> None:
-    # First login provisions the user.
+    # Create the user.
     resp = await client.post(
-        "/login",
+        "/signup",
         data={"email": "bob@example.com", "password": "pw-right"},
         follow_redirects=True,
     )

@@ -16,7 +16,7 @@ async def _init_db() -> None:
 
 
 async def _run_due_reminders() -> None:
-    # Stub implementation: marks due reminders as sent.
+    # TODO: Stub implementation marks due reminders as sent
     now = datetime.now(UTC)
     async with SessionMaker() as session:
         result = await session.execute(
@@ -24,12 +24,10 @@ async def _run_due_reminders() -> None:
         )
         reminders = list(result.scalars().all())
 
-        # Keep it simple: send everything in the past.
-        # (Real version should filter by now() and batch by channel.)
         sent = 0
         for reminder in reminders:
             if reminder.send_at <= now:
-                # Provider integrations come later.
+                # TODO: Add integration with an actual notification system (email, push, etc.)
                 reminder.sent_at = now
                 sent += 1
 

@@ -16,6 +16,7 @@
             {% if current_user %}
             <div style="display:flex; gap: .75rem; align-items: baseline;">
                 <small>Signed in as {{ current_user.email }}</small>
+                <a href="/profile">Profile</a>
                 <form method="post" action="/logout" style="display:inline;">
                     <button type="submit">Logout</button>
                 </form>

@@ -23,11 +23,11 @@
     <button type="submit">Sign in</button>
 </form>
 
+<p style="margin-top: .75rem;"><small>Need an account? <a href="/signup">Create one</a>.</small></p>
+
 {% if google_enabled %}
 <p style="margin-top: 1rem;">
     <a href="/auth/google/start">Sign in with Google</a>
 </p>
 {% endif %}
-
-<p><small>New email addresses are auto-provisioned (MVP).</small></p>
 {% endblock %}

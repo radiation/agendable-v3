@@ -6,9 +6,9 @@ from httpx import AsyncClient
 
 @pytest.mark.asyncio
 async def test_logout_clears_session(client: AsyncClient) -> None:
-    # Login
+    # Create + sign in
     resp = await client.post(
-        "/login",
+        "/signup",
         data={"email": "alice@example.com", "password": "pw-alice"},
         follow_redirects=True,
     )
@@ -20,7 +20,10 @@ async def test_logout_clears_session(client: AsyncClient) -> None:
     assert resp.status_code == 200
 
     # Confirm we're anonymous again
-    resp = await client.get("/")
+    resp = await client.get("/", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
+
+    resp = await client.get("/login")
     assert resp.status_code == 200
     assert "Signed in as" not in resp.text
-    assert "Sign in to create and view meeting series" in resp.text

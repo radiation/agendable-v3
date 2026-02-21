@@ -5,10 +5,10 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_index_anonymous_renders(client: AsyncClient) -> None:
-    resp = await client.get("/")
-    assert resp.status_code == 200
-    assert "Sign in to create and view meeting series" in resp.text
+async def test_index_anonymous_redirects_to_login(client: AsyncClient) -> None:
+    resp = await client.get("/", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
 
 
 @pytest.mark.asyncio
@@ -19,9 +19,9 @@ async def test_login_page_hides_google_when_disabled(client: AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_password_login_provisions_user_and_sets_session(client: AsyncClient) -> None:
+async def test_signup_creates_user_and_sets_session(client: AsyncClient) -> None:
     resp = await client.post(
-        "/login",
+        "/signup",
         data={"email": "alice@example.com", "password": "pw123456"},
         follow_redirects=True,
     )
@@ -31,9 +31,19 @@ async def test_password_login_provisions_user_and_sets_session(client: AsyncClie
 
 
 @pytest.mark.asyncio
+async def test_password_login_rejects_unknown_user(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/login",
+        data={"email": "unknown@example.com", "password": "pw123"},
+    )
+    assert resp.status_code == 401
+    assert "Account not found" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_password_login_rejects_wrong_password(client: AsyncClient) -> None:
     await client.post(
-        "/login",
+        "/signup",
         data={"email": "bob@example.com", "password": "pw-right"},
         follow_redirects=True,
     )
