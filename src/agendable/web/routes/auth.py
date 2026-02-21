@@ -234,3 +234,21 @@ async def profile(
             "current_user": user,
         },
     )
+
+
+@router.post("/profile", response_class=RedirectResponse)
+async def update_profile(
+    request: Request,
+    prefers_dark_mode: str | None = Form(None),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> RedirectResponse:
+    users = UserRepository(session)
+    user = await users.get_by_id(current_user.id)
+    if user is None:
+        raise HTTPException(status_code=404)
+
+    user.prefers_dark_mode = prefers_dark_mode is not None
+    await session.commit()
+
+    return RedirectResponse(url="/profile", status_code=303)

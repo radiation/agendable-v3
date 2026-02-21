@@ -1,5 +1,40 @@
+html {
+    color-scheme: light;
+    --bg: #ffffff;
+    --fg: #111827;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --link: #2563eb;
+    --control-bg: #ffffff;
+}
+
+html.dark {
+    color-scheme: dark;
+    --bg: #0b0f14;
+    --fg: #e5e7eb;
+    --muted: #9ca3af;
+    --border: #374151;
+    --link: #93c5fd;
+    --control-bg: #111827;
+}
+
 body {
     font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+}
+
+a {
+    color: var(--link);
+}
+
+small {
+    color: var(--muted);
+}
+
+hr {
+    border: 0;
+    border-top: 1px solid var(--border);
 }
 
 input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
@@ -7,6 +42,9 @@ select,
 textarea,
 button {
     padding: 0.35rem 0.5rem;
+    background: var(--control-bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
 }
 
 label {

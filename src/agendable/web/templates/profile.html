@@ -12,5 +12,16 @@
         <li><strong>Display name:</strong> {{ user.display_name }}</li>
         <li><strong>Created:</strong> {{ user.created_at }}</li>
     </ul>
+
+    <h3>Appearance</h3>
+    <form method="post" action="/profile">
+        <label class="inline">
+            <input type="checkbox" name="prefers_dark_mode" {% if user.prefers_dark_mode %}checked{% endif %} />
+            Dark mode
+        </label>
+        <p style="margin-top: 0.75rem;">
+            <button type="submit">Save</button>
+        </p>
+    </form>
 </section>
 {% endblock %}
