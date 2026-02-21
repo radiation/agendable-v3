@@ -11,8 +11,33 @@
 
 <form method="post" action="/signup" style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
     <label>
+        First name
+        <input name="first_name" required value="{{ form.first_name }}" />
+    </label>
+
+    <label>
+        Last name
+        <input name="last_name" value="{{ form.last_name }}" />
+    </label>
+
+    <label>
+        Timezone
+        <select id="signup-timezone" name="timezone" required>
+            {% set ns = namespace(found=false) %}
+            {% for tz_value, tz_label in timezone_options %}
+            {% if tz_value == form.timezone %}{% set ns.found = true %}{% endif %}
+            <option value="{{ tz_value }}" {% if tz_value==form.timezone %}selected{% endif %}>{{ tz_label }}</option>
+            {% endfor %}
+            {% if form.timezone and not ns.found %}
+            <option value="{{ form.timezone }}" selected>{{ form.timezone }} (custom)</option>
+            {% endfor %}
+            {% endif %}
+        </select>
+    </label>
+
+    <label>
         Email
-        <input name="email" type="email" required />
+        <input name="email" type="email" required value="{{ form.email }}" />
     </label>
 
     <label>
@@ -24,4 +49,19 @@
 </form>
 
 <p style="margin-top: .75rem;"><small>Already have an account? <a href="/login">Sign in</a>.</small></p>
+
+<script>
+    (() => {
+        const tzInput = document.getElementById("signup-timezone");
+        if (!tzInput) return;
+
+        const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (!systemTz) return;
+
+        const hasSystemTz = Array.from(tzInput.options).some((opt) => opt.value === systemTz);
+        if (hasSystemTz && (!tzInput.value || tzInput.value === "UTC")) {
+            tzInput.value = systemTz;
+        }
+    })();
+</script>
 {% endblock %}

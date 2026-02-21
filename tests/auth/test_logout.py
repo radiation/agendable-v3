@@ -9,11 +9,17 @@ async def test_logout_clears_session(client: AsyncClient) -> None:
     # Create + sign in
     resp = await client.post(
         "/signup",
-        data={"email": "alice@example.com", "password": "pw-alice"},
+        data={
+            "first_name": "Alice",
+            "last_name": "Example",
+            "timezone": "UTC",
+            "email": "alice@example.com",
+            "password": "pw-alice",
+        },
         follow_redirects=True,
     )
     assert resp.status_code == 200
-    assert "Signed in as alice@example.com" in resp.text
+    assert "Signed in as Alice Example" in resp.text
 
     # Logout
     resp = await client.post("/logout", follow_redirects=True)

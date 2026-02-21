@@ -16,9 +16,21 @@ async def test_meeting_series_repo_owner_scoping(db_session: AsyncSession) -> No
     users = UserRepository(db_session)
 
     alice = User(
-        email=f"alice-{uuid.uuid4()}@example.com", display_name="alice", password_hash=None
+        email=f"alice-{uuid.uuid4()}@example.com",
+        first_name="Alice",
+        last_name="Example",
+        display_name="Alice Example",
+        timezone="UTC",
+        password_hash=None,
     )
-    bob = User(email=f"bob-{uuid.uuid4()}@example.com", display_name="bob", password_hash=None)
+    bob = User(
+        email=f"bob-{uuid.uuid4()}@example.com",
+        first_name="Bob",
+        last_name="Example",
+        display_name="Bob Example",
+        timezone="UTC",
+        password_hash=None,
+    )
 
     await users.add(alice)
     await users.add(bob)

@@ -9,7 +9,13 @@ async def test_existing_user_wrong_password_stays_401(client: AsyncClient) -> No
     # Create the user.
     resp = await client.post(
         "/signup",
-        data={"email": "bob@example.com", "password": "pw-right"},
+        data={
+            "first_name": "Bob",
+            "last_name": "Example",
+            "timezone": "UTC",
+            "email": "bob@example.com",
+            "password": "pw-right",
+        },
         follow_redirects=True,
     )
     assert resp.status_code == 200

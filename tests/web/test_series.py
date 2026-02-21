@@ -14,7 +14,13 @@ async def _login(client: AsyncClient, email: str, password: str) -> None:
     # Tests run with a fresh DB; create the account explicitly.
     resp = await client.post(
         "/signup",
-        data={"email": email, "password": password},
+        data={
+            "first_name": "Test",
+            "last_name": "User",
+            "timezone": "UTC",
+            "email": email,
+            "password": password,
+        },
         follow_redirects=True,
     )
     if resp.status_code == 200:

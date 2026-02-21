@@ -11,7 +11,16 @@ from agendable.db.repos.users import UserRepository
 
 
 async def _new_user(email: str) -> User:
-    return User(email=email.strip().lower(), display_name=email.strip().lower(), password_hash=None)
+    normalized = email.strip().lower()
+    first = normalized.split("@", 1)[0] or "user"
+    return User(
+        email=normalized,
+        first_name=first,
+        last_name="",
+        display_name=first,
+        timezone="UTC",
+        password_hash=None,
+    )
 
 
 @pytest.mark.asyncio

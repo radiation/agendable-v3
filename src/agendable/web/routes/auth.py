@@ -14,7 +14,7 @@ from agendable.db.models import ExternalIdentity, User
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.settings import get_settings
 from agendable.sso_google import google_enabled
-from agendable.web.routes.common import oauth, templates
+from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
 
@@ -92,6 +92,12 @@ async def signup_form(request: Request, session: AsyncSession = Depends(get_sess
         {
             "error": None,
             "current_user": None,
+            "form": {
+                "first_name": "",
+                "last_name": "",
+                "timezone": "UTC",
+                "email": "",
+            },
         },
     )
 
@@ -99,11 +105,20 @@ async def signup_form(request: Request, session: AsyncSession = Depends(get_sess
 @router.post("/signup", response_class=HTMLResponse)
 async def signup(
     request: Request,
+    first_name: str = Form(...),
+    last_name: str = Form(""),
+    timezone: str = Form("UTC"),
     email: str = Form(...),
     password: str = Form(...),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    normalized_first_name = first_name.strip()
+    normalized_last_name = last_name.strip()
+    timezone_input = timezone.strip() or "UTC"
+    normalized_timezone = parse_timezone(timezone_input).key
     normalized_email = email.strip().lower()
+    if not normalized_first_name:
+        raise HTTPException(status_code=400, detail="First name is required")
     if not normalized_email:
         raise HTTPException(status_code=400, detail="Email is required")
 
@@ -116,13 +131,22 @@ async def signup(
             {
                 "error": "Account already exists. Sign in instead.",
                 "current_user": None,
+                "form": {
+                    "first_name": normalized_first_name,
+                    "last_name": normalized_last_name,
+                    "timezone": normalized_timezone,
+                    "email": normalized_email,
+                },
             },
             status_code=400,
         )
 
     user = User(
         email=normalized_email,
-        display_name=normalized_email,
+        first_name=normalized_first_name,
+        last_name=normalized_last_name,
+        timezone=normalized_timezone,
+        display_name=f"{normalized_first_name} {normalized_last_name}".strip(),
         password_hash=hash_password(password),
     )
     session.add(user)
@@ -239,6 +263,9 @@ async def profile(
 @router.post("/profile", response_class=RedirectResponse)
 async def update_profile(
     request: Request,
+    first_name: str = Form(...),
+    last_name: str = Form(""),
+    timezone: str = Form("UTC"),
     prefers_dark_mode: str | None = Form(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
@@ -248,6 +275,17 @@ async def update_profile(
     if user is None:
         raise HTTPException(status_code=404)
 
+    normalized_first_name = first_name.strip()
+    normalized_last_name = last_name.strip()
+    timezone_input = timezone.strip() or "UTC"
+    normalized_timezone = parse_timezone(timezone_input).key
+    if not normalized_first_name:
+        raise HTTPException(status_code=400, detail="First name is required")
+
+    user.first_name = normalized_first_name
+    user.last_name = normalized_last_name
+    user.timezone = normalized_timezone
+    user.display_name = f"{normalized_first_name} {normalized_last_name}".strip()
     user.prefers_dark_mode = prefers_dark_mode is not None
     await session.commit()
 

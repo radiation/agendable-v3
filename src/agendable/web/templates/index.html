@@ -80,7 +80,17 @@
         </label>
         <label>
             Time zone
-            <input name="recurrence_timezone" value="UTC" placeholder="America/New_York" required />
+            <select id="recurrence-timezone" name="recurrence_timezone" required>
+                {% set selected_tz = current_user.timezone if current_user and current_user.timezone else "UTC" %}
+                {% set ns = namespace(found=false) %}
+                {% for tz_value, tz_label in timezone_options %}
+                {% if tz_value == selected_tz %}{% set ns.found = true %}{% endif %}
+                <option value="{{ tz_value }}" {% if tz_value==selected_tz %}selected{% endif %}>{{ tz_label }}</option>
+                {% endfor %}
+                {% if selected_tz and not ns.found %}
+                <option value="{{ selected_tz }}" selected>{{ selected_tz }} (custom)</option>
+                {% endif %}
+            </select>
         </label>
         <label>
             Start date
@@ -106,4 +116,19 @@
     </ul>
     {% endif %}
 </section>
+
+<script>
+    (() => {
+        const tzInput = document.getElementById("recurrence-timezone");
+        if (!tzInput) return;
+
+        const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (!systemTz) return;
+
+        const hasSystemTz = Array.from(tzInput.options).some((opt) => opt.value === systemTz);
+        if (hasSystemTz && (!tzInput.value || tzInput.value === "UTC")) {
+            tzInput.value = systemTz;
+        }
+    })();
+</script>
 {% endblock %}

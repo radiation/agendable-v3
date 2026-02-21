@@ -32,12 +32,20 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    first_name: Mapped[str] = mapped_column(String(120))
+    last_name: Mapped[str] = mapped_column(String(120))
     display_name: Mapped[str] = mapped_column(String(200))
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     prefers_dark_mode: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     meeting_series: Mapped[list[MeetingSeries]] = relationship(back_populates="owner")
@@ -48,6 +56,10 @@ class User(Base):
     external_identities: Mapped[list[ExternalIdentity]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
 
 
 class ExternalIdentity(Base):

@@ -7,21 +7,59 @@
 
 <section>
     <h2>Profile</h2>
-    <ul>
-        <li><strong>Email:</strong> {{ user.email }}</li>
-        <li><strong>Display name:</strong> {{ user.display_name }}</li>
-        <li><strong>Created:</strong> {{ user.created_at }}</li>
-    </ul>
-
-    <h3>Appearance</h3>
-    <form method="post" action="/profile">
+    <form method="post" action="/profile" style="display:grid; gap: .75rem; max-width: 32rem;">
+        <label>
+            First name
+            <input name="first_name" value="{{ user.first_name }}" required />
+        </label>
+        <label>
+            Last name
+            <input name="last_name" value="{{ user.last_name }}" />
+        </label>
+        <label>
+            Timezone
+            <select id="profile-timezone" name="timezone" required>
+                {% set ns = namespace(found=false) %}
+                {% for tz_value, tz_label in timezone_options %}
+                {% if tz_value == user.timezone %}{% set ns.found = true %}{% endif %}
+                <option value="{{ tz_value }}" {% if tz_value==user.timezone %}selected{% endif %}>{{ tz_label }}
+                </option>
+                {% endfor %}
+                {% if user.timezone and not ns.found %}
+                <option value="{{ user.timezone }}" selected>{{ user.timezone }} (custom)</option>
+                {% endif %}
+            </select>
+        </label>
+        <p style="margin: 0;"><small>Use an IANA timezone like <strong>America/New_York</strong>.</small></p>
         <label class="inline">
             <input type="checkbox" name="prefers_dark_mode" {% if user.prefers_dark_mode %}checked{% endif %} />
             Dark mode
         </label>
-        <p style="margin-top: 0.75rem;">
+        <p style="margin-top: 0.75rem; margin-bottom: 0;">
             <button type="submit">Save</button>
         </p>
     </form>
+
+    <ul>
+        <li><strong>Email:</strong> {{ user.email }}</li>
+        <li><strong>Name:</strong> {{ user.full_name }}</li>
+        <li><strong>Timezone:</strong> {{ user.timezone }}</li>
+        <li><strong>Created:</strong> {{ user.created_at }}</li>
+    </ul>
 </section>
+
+<script>
+    (() => {
+        const tzInput = document.getElementById("profile-timezone");
+        if (!tzInput) return;
+
+        const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (!systemTz) return;
+
+        const hasSystemTz = Array.from(tzInput.options).some((opt) => opt.value === systemTz);
+        if (hasSystemTz && !tzInput.value) {
+            tzInput.value = systemTz;
+        }
+    })();
+</script>
 {% endblock %}

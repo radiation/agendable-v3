@@ -15,7 +15,13 @@ from agendable.db.models import AgendaItem, MeetingOccurrence, MeetingSeries, Ta
 async def _login(client: AsyncClient, email: str, password: str) -> None:
     resp = await client.post(
         "/signup",
-        data={"email": email, "password": password},
+        data={
+            "first_name": "Test",
+            "last_name": "User",
+            "timezone": "UTC",
+            "email": email,
+            "password": password,
+        },
         follow_redirects=True,
     )
     if resp.status_code == 200:
@@ -273,7 +279,14 @@ async def test_task_assignment_requires_attendee(
     )
     assert occ is not None
 
-    bob = User(email=f"bob-{uuid.uuid4()}@example.com", display_name="Bob", password_hash=None)
+    bob = User(
+        email=f"bob-{uuid.uuid4()}@example.com",
+        first_name="Bob",
+        last_name="Builder",
+        display_name="Bob Builder",
+        timezone="UTC",
+        password_hash=None,
+    )
     db_session.add(bob)
     await db_session.commit()
     await db_session.refresh(bob)
