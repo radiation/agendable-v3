@@ -10,7 +10,14 @@ from sqlalchemy.orm import selectinload
 
 from agendable.auth import require_user
 from agendable.db import get_session
-from agendable.db.models import AgendaItem, MeetingOccurrenceAttendee, Task, User
+from agendable.db.models import (
+    AgendaItem,
+    MeetingOccurrence,
+    MeetingOccurrenceAttendee,
+    MeetingSeries,
+    Task,
+    User,
+)
 from agendable.db.repos import (
     AgendaItemRepository,
     MeetingOccurrenceRepository,
@@ -32,6 +39,34 @@ def _ensure_occurrence_writable(occurrence_id: uuid.UUID, is_completed: bool) ->
         )
 
 
+async def _get_owned_occurrence(
+    session: AsyncSession,
+    occurrence_id: uuid.UUID,
+    owner_user_id: uuid.UUID,
+) -> tuple[MeetingOccurrence, MeetingSeries]:
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(occurrence_id)
+    if occurrence is None:
+        raise HTTPException(status_code=404)
+
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.get_for_owner(occurrence.series_id, owner_user_id)
+    if series is None:
+        raise HTTPException(status_code=404)
+
+    return occurrence, series
+
+
+async def _ensure_occurrence_owner(
+    session: AsyncSession,
+    occurrence: MeetingOccurrence,
+    owner_user_id: uuid.UUID,
+) -> None:
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(occurrence.series_id, owner_user_id) is None:
+        raise HTTPException(status_code=404)
+
+
 @router.get("/occurrences/{occurrence_id}", response_class=HTMLResponse)
 async def occurrence_detail(
     request: Request,
@@ -39,15 +74,7 @@ async def occurrence_detail(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    occ_repo = MeetingOccurrenceRepository(session)
-    occurrence = await occ_repo.get_by_id(occurrence_id)
-    if occurrence is None:
-        raise HTTPException(status_code=404)
-
-    series_repo = MeetingSeriesRepository(session)
-    series = await series_repo.get_for_owner(occurrence.series_id, current_user.id)
-    if series is None:
-        raise HTTPException(status_code=404)
+    occurrence, series = await _get_owned_occurrence(session, occurrence_id, current_user.id)
 
     tasks_repo = TaskRepository(session)
     tasks = await tasks_repo.list_for_occurrence(occurrence.id)
@@ -104,18 +131,11 @@ async def create_task(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    occ_repo = MeetingOccurrenceRepository(session)
-    occurrence = await occ_repo.get_by_id(occurrence_id)
-    if occurrence is None:
-        raise HTTPException(status_code=404)
-
-    series_repo = MeetingSeriesRepository(session)
-    series = await series_repo.get_for_owner(occurrence.series_id, current_user.id)
-    if series is None:
-        raise HTTPException(status_code=404)
+    occurrence, series = await _get_owned_occurrence(session, occurrence_id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
+    occ_repo = MeetingOccurrenceRepository(session)
     next_occurrence = await occ_repo.get_next_for_series(
         occurrence.series_id, occurrence.scheduled_at
     )
@@ -159,15 +179,7 @@ async def add_attendee(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    occ_repo = MeetingOccurrenceRepository(session)
-    occurrence = await occ_repo.get_by_id(occurrence_id)
-    if occurrence is None:
-        raise HTTPException(status_code=404)
-
-    series_repo = MeetingSeriesRepository(session)
-    series = await series_repo.get_for_owner(occurrence.series_id, current_user.id)
-    if series is None:
-        raise HTTPException(status_code=404)
+    occurrence, _ = await _get_owned_occurrence(session, occurrence_id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
@@ -209,9 +221,7 @@ async def toggle_task(
     if occurrence is None:
         raise HTTPException(status_code=404)
 
-    series_repo = MeetingSeriesRepository(session)
-    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
-        raise HTTPException(status_code=404)
+    await _ensure_occurrence_owner(session, occurrence, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
@@ -227,14 +237,7 @@ async def add_agenda_item(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    occ_repo = MeetingOccurrenceRepository(session)
-    occurrence = await occ_repo.get_by_id(occurrence_id)
-    if occurrence is None:
-        raise HTTPException(status_code=404)
-
-    series_repo = MeetingSeriesRepository(session)
-    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
-        raise HTTPException(status_code=404)
+    occurrence, _ = await _get_owned_occurrence(session, occurrence_id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
@@ -261,9 +264,7 @@ async def toggle_agenda_item(
     if occurrence is None:
         raise HTTPException(status_code=404)
 
-    series_repo = MeetingSeriesRepository(session)
-    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
-        raise HTTPException(status_code=404)
+    await _ensure_occurrence_owner(session, occurrence, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
@@ -279,18 +280,12 @@ async def complete_occurrence(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    occ_repo = MeetingOccurrenceRepository(session)
-    occurrence = await occ_repo.get_by_id(occurrence_id)
-    if occurrence is None:
-        raise HTTPException(status_code=404)
-
-    series_repo = MeetingSeriesRepository(session)
-    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
-        raise HTTPException(status_code=404)
+    occurrence, _ = await _get_owned_occurrence(session, occurrence_id, current_user.id)
 
     if occurrence.is_completed:
         return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
 
+    occ_repo = MeetingOccurrenceRepository(session)
     next_occurrence = await occ_repo.get_next_for_series(
         occurrence.series_id, occurrence.scheduled_at
     )

@@ -33,7 +33,7 @@ async def test_signup_creates_user_and_sets_session(client: AsyncClient) -> None
     )
     assert resp.status_code == 200
     assert "Signed in as Alice Example" in resp.text
-    assert "Meeting series" in resp.text
+    assert "Dashboard" in resp.text
 
 
 @pytest.mark.asyncio

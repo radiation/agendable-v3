@@ -101,7 +101,7 @@ async def login(
 async def signup_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
     try:
         _ = await require_user(request, session)
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url="/dashboard", status_code=303)
     except HTTPException:
         pass
 
@@ -174,7 +174,7 @@ async def signup(
     await session.refresh(user)
 
     request.session["user_id"] = str(user.id)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @router.get("/auth/google/start", response_class=RedirectResponse)
@@ -252,7 +252,7 @@ async def google_callback(
     await _maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @router.post("/logout", response_class=RedirectResponse)
