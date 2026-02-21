@@ -9,6 +9,13 @@
     <h2>{{ series.title }}</h2>
     <p><small>Repeats: {{ recurrence_label }}</small></p>
     <p><strong>Scheduled:</strong> {{ occurrence.scheduled_at }}</p>
+    {% if occurrence.is_completed %}
+    <p><strong>Status:</strong> Completed</p>
+    {% else %}
+    <form method="post" action="/occurrences/{{ occurrence.id }}/complete">
+        <button type="submit">Complete meeting & roll unfinished items forward</button>
+    </form>
+    {% endif %}
 </section>
 
 <hr />

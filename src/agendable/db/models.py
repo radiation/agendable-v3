@@ -104,6 +104,7 @@ class MeetingOccurrence(Base):
 
     scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

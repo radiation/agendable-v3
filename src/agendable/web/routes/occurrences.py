@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.auth import require_user
@@ -160,3 +161,43 @@ async def toggle_agenda_item(
 
     await session.commit()
     return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
+
+
+@router.post("/occurrences/{occurrence_id}/complete", response_class=RedirectResponse)
+async def complete_occurrence(
+    occurrence_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> RedirectResponse:
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(occurrence_id)
+    if occurrence is None:
+        raise HTTPException(status_code=404)
+
+    series_repo = MeetingSeriesRepository(session)
+    if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
+        raise HTTPException(status_code=404)
+
+    if occurrence.is_completed:
+        return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
+
+    next_occurrence = await occ_repo.get_next_for_series(
+        occurrence.series_id, occurrence.scheduled_at
+    )
+    if next_occurrence is not None:
+        await session.execute(
+            update(Task)
+            .where(Task.occurrence_id == occurrence.id, Task.is_done.is_(False))
+            .values(occurrence_id=next_occurrence.id)
+        )
+        await session.execute(
+            update(AgendaItem)
+            .where(AgendaItem.occurrence_id == occurrence.id, AgendaItem.is_done.is_(False))
+            .values(occurrence_id=next_occurrence.id)
+        )
+
+    occurrence.is_completed = True
+    await session.commit()
+
+    redirect_occurrence_id = next_occurrence.id if next_occurrence is not None else occurrence.id
+    return RedirectResponse(url=f"/occurrences/{redirect_occurrence_id}", status_code=303)
