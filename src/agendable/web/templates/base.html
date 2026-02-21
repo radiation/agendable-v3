@@ -16,6 +16,9 @@
             {% if current_user %}
             <div style="display:flex; gap: .75rem; align-items: baseline;">
                 <small>Signed in as {{ current_user.display_name }}</small>
+                {% if current_user.role.value == "admin" %}
+                <a href="/admin/users">Admin</a>
+                {% endif %}
                 <a href="/profile">Profile</a>
                 <form method="post" action="/logout" style="display:inline;">
                     <button type="submit">Logout</button>

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db import get_session
-from agendable.db.models import User
+from agendable.db.models import User, UserRole
 
 _password_hasher = PasswordHasher()
 
@@ -49,4 +49,14 @@ async def require_user(
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    return user
+
+
+async def require_admin(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    user = await require_user(request, session)
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     return user

@@ -5,7 +5,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENDABLE_", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_prefix="AGENDABLE_",
+        case_sensitive=False,
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
 
     database_url: str = "sqlite+aiosqlite:///./agendable.db"
 
@@ -24,6 +29,9 @@ class Settings(BaseSettings):
     google_client_secret: SecretStr | None = None
     # If set, only allow users with emails in this domain (e.g. "example.com").
     allowed_email_domain: str | None = None
+
+    # If set, this email is auto-promoted to admin on signup/login.
+    bootstrap_admin_email: str | None = None
 
 
 def get_settings() -> Settings:

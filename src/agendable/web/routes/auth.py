@@ -10,13 +10,30 @@ from starlette.responses import Response
 
 from agendable.auth import hash_password, require_user, verify_password
 from agendable.db import get_session
-from agendable.db.models import ExternalIdentity, User
+from agendable.db.models import ExternalIdentity, User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.settings import get_settings
 from agendable.sso_google import google_enabled
 from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
+
+
+def _is_bootstrap_admin_email(email: str) -> bool:
+    configured = get_settings().bootstrap_admin_email
+    if configured is None:
+        return False
+    return configured.strip().lower() == email.strip().lower()
+
+
+async def _maybe_promote_bootstrap_admin(user: User, session: AsyncSession) -> None:
+    if user.role == UserRole.admin:
+        return
+    if not _is_bootstrap_admin_email(user.email):
+        return
+
+    user.role = UserRole.admin
+    await session.commit()
 
 
 @router.get("/login", response_class=Response)
@@ -73,6 +90,8 @@ async def login(
             },
             status_code=401,
         )
+
+    await _maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/", status_code=303)
@@ -147,6 +166,7 @@ async def signup(
         last_name=normalized_last_name,
         timezone=normalized_timezone,
         display_name=f"{normalized_first_name} {normalized_last_name}".strip(),
+        role=(UserRole.admin if _is_bootstrap_admin_email(normalized_email) else UserRole.user),
         password_hash=hash_password(password),
     )
     session.add(user)
@@ -228,6 +248,8 @@ async def google_callback(
         ext = ExternalIdentity(user_id=user.id, provider="google", subject=sub, email=email)
         session.add(ext)
         await session.commit()
+
+    await _maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/", status_code=303)

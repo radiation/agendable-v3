@@ -104,19 +104,18 @@ def upgrade() -> None:
                 meeting_series, meeting_occurrence.c.series_id == meeting_series.c.id
             )
         )
-    )
-    bind.execute(
-        sa.insert(attendee),
-        [
-            {
-                "id": uuid.uuid4(),
-                "occurrence_id": occurrence_id,
-                "user_id": owner_user_id,
-                "created_at": now,
-            }
-            for occurrence_id, owner_user_id in rows
-        ],
-    )
+    ).all()
+    backfill_values = [
+        {
+            "id": uuid.uuid4(),
+            "occurrence_id": occurrence_id,
+            "user_id": owner_user_id,
+            "created_at": now,
+        }
+        for occurrence_id, owner_user_id in rows
+    ]
+    if backfill_values:
+        bind.execute(sa.insert(attendee), backfill_values)
 
     with op.batch_alter_table("task") as batch:
         batch.alter_column(

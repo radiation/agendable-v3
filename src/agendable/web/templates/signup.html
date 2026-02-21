@@ -30,7 +30,6 @@
             {% endfor %}
             {% if form.timezone and not ns.found %}
             <option value="{{ form.timezone }}" selected>{{ form.timezone }} (custom)</option>
-            {% endfor %}
             {% endif %}
         </select>
     </label>
