@@ -1,5 +1,10 @@
 ## Agendable
 
+[![CI](https://github.com/radiation/agendable-v3/actions/workflows/ci.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/radiation/agendable-v3/graph/badge.svg)](https://codecov.io/gh/radiation/agendable-v3)
+[![Python](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
+[![Ruff](https://img.shields.io/badge/lint-ruff-46aef7.svg)](https://github.com/astral-sh/ruff)
+
 Minimal app for tracking agenda items and tasks for recurring meetings (e.g. 1:1s), with reminder stubs (email/Slack).
 
 ### Run locally (SQLite)
@@ -112,3 +117,29 @@ Notes:
 
 - `ruff` + `mypy` run on `pre-commit`.
 - `pytest` is configured for `pre-push` (it’ll matter once we add tests).
+
+### GitHub Actions + coverage gates
+
+This repo includes CI at `.github/workflows/ci.yml` that runs on PRs and pushes to `main`:
+
+- `ruff check`
+- `mypy --strict src`
+- `pytest` with coverage report upload
+
+Coverage is uploaded to Codecov using `.github/codecov.yml`, with ratcheting-style checks:
+
+- `codecov/project` target is `auto` (do not regress overall coverage)
+- `codecov/patch` target is `auto` (require new/changed code to maintain patch coverage)
+
+Recommended GitHub repo settings:
+
+1. Enable branch protection for `main`.
+2. Require pull requests before merging.
+3. Require status checks to pass before merging:
+	- `Lint, typecheck, test, coverage`
+4. Require Codecov checks for PRs:
+	- `codecov/project`
+	- `codecov/patch`
+
+For private repos, add `CODECOV_TOKEN` in GitHub Actions secrets if required by your Codecov setup.
+For this public repo, tokenless uploads should work, but adding `CODECOV_TOKEN` is also valid and supported by the workflow.
