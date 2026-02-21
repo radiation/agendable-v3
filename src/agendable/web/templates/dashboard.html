@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Agendable — Dashboard{% endblock %}
+
+{% block content %}
+<section>
+    <h2>Dashboard</h2>
+</section>
+
+<hr />
+
+<section>
+    <h3>Upcoming meetings</h3>
+    <ul>
+        {% for meeting in upcoming_meetings %}
+        <li>
+            <a href="/occurrences/{{ meeting.id }}">{{ meeting.series.title }}</a>
+            <small>— {{ meeting.scheduled_at }}</small>
+        </li>
+        {% else %}
+        <li><em>No upcoming meetings.</em></li>
+        {% endfor %}
+    </ul>
+</section>
+
+<hr />
+
+<section>
+    <h3>Outstanding tasks</h3>
+    <ul>
+        {% for task in outstanding_tasks %}
+        <li>
+            {{ task.due_at }} -
+            <a href="/occurrences/{{ task.occurrence_id }}">{{ task.title }}</a>
+        </li>
+        {% else %}
+        <li><em>No outstanding tasks.</em></li>
+        {% endfor %}
+    </ul>
+</section>
+{% endblock %}

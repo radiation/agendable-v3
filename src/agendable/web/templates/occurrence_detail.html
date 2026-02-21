@@ -22,6 +22,7 @@
 
 <section>
     <h3>Attendees</h3>
+    {% if not occurrence.is_completed %}
     <form method="post" action="/occurrences/{{ occurrence.id }}/attendees"
         style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
         <label>
@@ -30,6 +31,9 @@
         </label>
         <button type="submit">Add attendee</button>
     </form>
+    {% else %}
+    <p><small>Meeting is completed, so attendees are read-only.</small></p>
+    {% endif %}
 
     <ul>
         {% for attendee in attendee_users %}
@@ -45,6 +49,7 @@
 <section>
     <h3>Tasks</h3>
 
+    {% if not occurrence.is_completed %}
     <form method="post" action="/occurrences/{{ occurrence.id }}/tasks"
         style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
         <label>
@@ -61,13 +66,18 @@
         </label>
         <button type="submit">Add task</button>
     </form>
+    {% else %}
+    <p><small>Meeting is completed, so tasks are read-only.</small></p>
+    {% endif %}
 
     <ul>
         {% for t in tasks %}
         <li>
+            {% if not occurrence.is_completed %}
             <form method="post" action="/tasks/{{ t.id }}/toggle" style="display:inline;">
                 <button type="submit">{% if t.is_done %}Undo{% else %}Done{% endif %}</button>
             </form>
+            {% endif %}
             {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
             <small>— {{ t.assignee.full_name }}</small>
         </li>
@@ -82,6 +92,7 @@
 <section>
     <h3>Agenda</h3>
 
+    {% if not occurrence.is_completed %}
     <form method="post" action="/occurrences/{{ occurrence.id }}/agenda"
         style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
         <label>
@@ -90,13 +101,18 @@
         </label>
         <button type="submit">Add</button>
     </form>
+    {% else %}
+    <p><small>Meeting is completed, so agenda is read-only.</small></p>
+    {% endif %}
 
     <ul>
         {% for a in agenda_items %}
         <li>
+            {% if not occurrence.is_completed %}
             <form method="post" action="/agenda/{{ a.id }}/toggle" style="display:inline;">
                 <button type="submit">{% if a.is_done %}Undo{% else %}Done{% endif %}</button>
             </form>
+            {% endif %}
             {% if a.is_done %}<s>{{ a.body }}</s>{% else %}{{ a.body }}{% endif %}
         </li>
         {% else %}

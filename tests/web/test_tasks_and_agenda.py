@@ -101,6 +101,7 @@ async def test_task_create_and_toggle_is_scoped(
     ).scalar_one()
     assert task.is_done is False
     assert task.assigned_user_id == series.owner_user_id
+    assert task.due_at == occ.scheduled_at
     task_id = task.id
 
     resp = await client.post(f"/tasks/{task.id}/toggle", follow_redirects=True)
@@ -209,12 +210,14 @@ async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
     unfinished_task = Task(
         occurrence_id=first.id,
         assigned_user_id=series.owner_user_id,
+        due_at=first.scheduled_at,
         title="Move me",
         is_done=False,
     )
     completed_task = Task(
         occurrence_id=first.id,
         assigned_user_id=series.owner_user_id,
+        due_at=first.scheduled_at,
         title="Keep me",
         is_done=True,
     )
@@ -243,6 +246,8 @@ async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
         ).scalar_one()
         assert moved_task.occurrence_id == second.id
         assert kept_task.occurrence_id == first.id
+        assert moved_task.due_at == second.scheduled_at
+        assert kept_task.due_at == first.scheduled_at
 
         moved_agenda = (
             await verify_session.execute(
@@ -318,3 +323,161 @@ async def test_task_assignment_requires_attendee(
         )
     ).scalar_one()
     assert assigned_task.assigned_user_id == bob.id
+
+
+@pytest.mark.asyncio
+async def test_completed_occurrence_is_read_only(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _login(client, "alice@example.com", "pw-alice")
+    series = await _create_series(client, db_session, title=f"ReadOnly {uuid.uuid4()}")
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    task = Task(
+        occurrence_id=occ.id,
+        assigned_user_id=series.owner_user_id,
+        due_at=occ.scheduled_at,
+        title="Existing task",
+        is_done=False,
+    )
+    agenda = AgendaItem(occurrence_id=occ.id, body="Existing agenda", is_done=False)
+    bob = User(
+        email=f"readonly-bob-{uuid.uuid4()}@example.com",
+        first_name="Bob",
+        last_name="Readonly",
+        display_name="Bob Readonly",
+        timezone="UTC",
+        password_hash=None,
+    )
+    db_session.add_all([task, agenda, bob])
+    await db_session.commit()
+    await db_session.refresh(task)
+    await db_session.refresh(agenda)
+    await db_session.refresh(bob)
+
+    resp = await client.post(f"/occurrences/{occ.id}/complete", follow_redirects=False)
+    assert resp.status_code == 303
+
+    add_task_resp = await client.post(
+        f"/occurrences/{occ.id}/tasks",
+        data={"title": "Should fail"},
+        follow_redirects=False,
+    )
+    assert add_task_resp.status_code == 400
+
+    add_agenda_resp = await client.post(
+        f"/occurrences/{occ.id}/agenda",
+        data={"body": "Should fail"},
+        follow_redirects=False,
+    )
+    assert add_agenda_resp.status_code == 400
+
+    add_attendee_resp = await client.post(
+        f"/occurrences/{occ.id}/attendees",
+        data={"email": bob.email},
+        follow_redirects=False,
+    )
+    assert add_attendee_resp.status_code == 400
+
+    toggle_task_resp = await client.post(f"/tasks/{task.id}/toggle", follow_redirects=False)
+    assert toggle_task_resp.status_code == 400
+
+    toggle_agenda_resp = await client.post(f"/agenda/{agenda.id}/toggle", follow_redirects=False)
+    assert toggle_agenda_resp.status_code == 400
+
+    async with db.SessionMaker() as verify_session:
+        refreshed_occ = (
+            await verify_session.execute(
+                select(MeetingOccurrence).where(MeetingOccurrence.id == occ.id)
+            )
+        ).scalar_one()
+        assert refreshed_occ.is_completed is True
+
+        refreshed_task = (
+            await verify_session.execute(select(Task).where(Task.id == task.id))
+        ).scalar_one()
+        refreshed_agenda = (
+            await verify_session.execute(select(AgendaItem).where(AgendaItem.id == agenda.id))
+        ).scalar_one()
+        assert refreshed_task.is_done is False
+        assert refreshed_agenda.is_done is False
+
+        still_one_task = (
+            (
+                await verify_session.execute(
+                    select(Task).where(Task.occurrence_id == occ.id, Task.title == "Existing task")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        still_one_agenda = (
+            (
+                await verify_session.execute(
+                    select(AgendaItem).where(
+                        AgendaItem.occurrence_id == occ.id,
+                        AgendaItem.body == "Existing agenda",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(still_one_task) == 1
+        assert len(still_one_agenda) == 1
+
+
+@pytest.mark.asyncio
+async def test_task_defaults_due_at_to_next_occurrence_when_available(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _login(client, "alice@example.com", "pw-alice")
+    series = await _create_series(client, db_session, title=f"DueDefault {uuid.uuid4()}")
+
+    first = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.asc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert first is not None
+
+    second = MeetingOccurrence(
+        series_id=series.id,
+        scheduled_at=first.scheduled_at + timedelta(days=2),
+        notes="",
+    )
+    db_session.add(second)
+    await db_session.commit()
+    await db_session.refresh(second)
+
+    resp = await client.post(
+        f"/occurrences/{first.id}/tasks",
+        data={"title": "Default due"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    created = (
+        await db_session.execute(
+            select(Task).where(Task.occurrence_id == first.id, Task.title == "Default due")
+        )
+    ).scalar_one()
+    assert created.due_at == second.scheduled_at

@@ -199,6 +199,7 @@ class Task(Base):
     assigned_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
 
     title: Mapped[str] = mapped_column(String(300))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     is_done: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(

@@ -40,7 +40,7 @@ async def _maybe_promote_bootstrap_admin(user: User, session: AsyncSession) -> N
 async def login_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
     try:
         _ = await require_user(request, session)
-        return RedirectResponse(url="/", status_code=303)
+        return RedirectResponse(url="/dashboard", status_code=303)
     except HTTPException:
         pass
 
@@ -94,7 +94,7 @@ async def login(
     await _maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @router.get("/signup", response_class=Response)

@@ -16,6 +16,7 @@
             {% if current_user %}
             <div style="display:flex; gap: .75rem; align-items: baseline;">
                 <small>Signed in as {{ current_user.display_name }}</small>
+                <a href="/dashboard">Dashboard</a>
                 {% if current_user.role.value == "admin" %}
                 <a href="/admin/users">Admin</a>
                 {% endif %}

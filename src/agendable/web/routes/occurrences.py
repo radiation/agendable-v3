@@ -24,6 +24,14 @@ from agendable.web.routes.common import templates
 router = APIRouter()
 
 
+def _ensure_occurrence_writable(occurrence_id: uuid.UUID, is_completed: bool) -> None:
+    if is_completed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Meeting {occurrence_id} is completed and read-only",
+        )
+
+
 @router.get("/occurrences/{occurrence_id}", response_class=HTMLResponse)
 async def occurrence_detail(
     request: Request,
@@ -106,6 +114,15 @@ async def create_task(
     if series is None:
         raise HTTPException(status_code=404)
 
+    _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
+
+    next_occurrence = await occ_repo.get_next_for_series(
+        occurrence.series_id, occurrence.scheduled_at
+    )
+    due_at = (
+        next_occurrence.scheduled_at if next_occurrence is not None else occurrence.scheduled_at
+    )
+
     final_assignee_id = assigned_user_id or current_user.id
     users_repo = UserRepository(session)
     assignee = await users_repo.get_by_id(final_assignee_id)
@@ -124,7 +141,12 @@ async def create_task(
         if attendee_link is None:
             raise HTTPException(status_code=400, detail="Assignee must be a meeting attendee")
 
-    task = Task(occurrence_id=occurrence_id, title=title, assigned_user_id=final_assignee_id)
+    task = Task(
+        occurrence_id=occurrence_id,
+        title=title,
+        assigned_user_id=final_assignee_id,
+        due_at=due_at,
+    )
     session.add(task)
     await session.commit()
     return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
@@ -146,6 +168,8 @@ async def add_attendee(
     series = await series_repo.get_for_owner(occurrence.series_id, current_user.id)
     if series is None:
         raise HTTPException(status_code=404)
+
+    _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
     users_repo = UserRepository(session)
     attendee_user = await users_repo.get_by_email(email)
@@ -189,6 +213,8 @@ async def toggle_task(
     if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
+    _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
+
     task.is_done = not task.is_done
     await session.commit()
     return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
@@ -210,6 +236,8 @@ async def add_agenda_item(
     if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
 
+    _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
+
     item = AgendaItem(occurrence_id=occurrence_id, body=body)
     session.add(item)
     await session.commit()
@@ -228,8 +256,6 @@ async def toggle_agenda_item(
     if item is None:
         raise HTTPException(status_code=404)
 
-    item.is_done = not item.is_done
-
     occ_repo = MeetingOccurrenceRepository(session)
     occurrence = await occ_repo.get_by_id(item.occurrence_id)
     if occurrence is None:
@@ -238,6 +264,10 @@ async def toggle_agenda_item(
     series_repo = MeetingSeriesRepository(session)
     if await series_repo.get_for_owner(occurrence.series_id, current_user.id) is None:
         raise HTTPException(status_code=404)
+
+    _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
+
+    item.is_done = not item.is_done
 
     await session.commit()
     return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
@@ -268,7 +298,7 @@ async def complete_occurrence(
         await session.execute(
             update(Task)
             .where(Task.occurrence_id == occurrence.id, Task.is_done.is_(False))
-            .values(occurrence_id=next_occurrence.id)
+            .values(occurrence_id=next_occurrence.id, due_at=next_occurrence.scheduled_at)
         )
         await session.execute(
             update(AgendaItem)
