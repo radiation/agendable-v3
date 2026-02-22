@@ -29,11 +29,13 @@ Then run the app:
 
 - Build + start: `docker compose up --build`
 - Open: `http://127.0.0.1:8000/`
+- Mailpit inbox UI: `http://127.0.0.1:8025/`
 - Stop: `docker compose down`
 
 The compose setup includes:
 
 - Postgres (`postgres:17`) with a persistent Docker volume (`postgres_data`)
+- Mailpit (`axllent/mailpit`) for local email capture/testing
 - A bind mount from local repo to container (`.:/app`)
 - Live reload command in the app container:
 	- `uvicorn agendable.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src`
@@ -56,6 +58,18 @@ Tables are managed by Alembic migrations.
 
 - Initialize DB (creates tables): `uv run agendable init-db`
 - Run reminder sender stub: `uv run agendable run-reminders`
+
+Email reminders can be enabled by configuring SMTP env vars:
+
+- `AGENDABLE_SMTP_HOST`
+- `AGENDABLE_SMTP_PORT` (default `587`)
+- `AGENDABLE_SMTP_USERNAME` (optional)
+- `AGENDABLE_SMTP_PASSWORD` (optional)
+- `AGENDABLE_SMTP_FROM_EMAIL`
+- `AGENDABLE_SMTP_USE_SSL` (default `false`)
+- `AGENDABLE_SMTP_USE_STARTTLS` (default `true`)
+
+If SMTP is not configured, `run-reminders` uses a no-op sender for email reminders.
 
 ### Migrations (Alembic)
 

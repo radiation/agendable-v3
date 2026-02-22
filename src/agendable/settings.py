@@ -23,6 +23,14 @@ class Settings(BaseSettings):
 
     # Reminder integrations (optional for now)
     slack_webhook_url: SecretStr | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from_email: str | None = None
+    smtp_use_ssl: bool = False
+    smtp_use_starttls: bool = True
+    smtp_timeout_seconds: float = 10.0
 
     # Google OIDC (optional)
     google_client_id: str | None = None
