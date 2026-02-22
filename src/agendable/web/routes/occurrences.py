@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -26,7 +27,7 @@ from agendable.db.repos import (
     UserRepository,
 )
 from agendable.recurrence import describe_recurrence
-from agendable.web.routes.common import templates
+from agendable.web.routes.common import parse_dt, templates
 
 router = APIRouter()
 
@@ -75,6 +76,19 @@ async def occurrence_detail(
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
     occurrence, series = await _get_owned_occurrence(session, occurrence_id, current_user.id)
+    occ_repo = MeetingOccurrenceRepository(session)
+    next_occurrence = await occ_repo.get_next_for_series(
+        occurrence.series_id, occurrence.scheduled_at
+    )
+    task_due_default = (
+        next_occurrence.scheduled_at if next_occurrence is not None else occurrence.scheduled_at
+    )
+    task_due_default_utc = (
+        task_due_default.replace(tzinfo=UTC)
+        if task_due_default.tzinfo is None
+        else task_due_default.astimezone(UTC)
+    )
+    task_due_default_value = task_due_default_utc.strftime("%Y-%m-%dT%H:%M")
 
     tasks_repo = TaskRepository(session)
     tasks = await tasks_repo.list_for_occurrence(occurrence.id)
@@ -116,6 +130,7 @@ async def occurrence_detail(
             ),
             "occurrence": occurrence,
             "tasks": tasks,
+            "task_due_default_value": task_due_default_value,
             "agenda_items": agenda_items,
             "attendee_users": attendee_users,
             "current_user": current_user,
@@ -127,6 +142,7 @@ async def occurrence_detail(
 async def create_task(
     occurrence_id: uuid.UUID,
     title: str = Form(...),
+    due_at_input: str | None = Form(None, alias="due_at"),
     assigned_user_id: uuid.UUID | None = Form(None),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
@@ -139,8 +155,13 @@ async def create_task(
     next_occurrence = await occ_repo.get_next_for_series(
         occurrence.series_id, occurrence.scheduled_at
     )
-    due_at = (
+    default_due_at = (
         next_occurrence.scheduled_at if next_occurrence is not None else occurrence.scheduled_at
+    )
+    final_due_at = (
+        parse_dt(due_at_input)
+        if due_at_input is not None and due_at_input.strip()
+        else default_due_at
     )
 
     final_assignee_id = assigned_user_id or current_user.id
@@ -165,7 +186,7 @@ async def create_task(
         occurrence_id=occurrence_id,
         title=title,
         assigned_user_id=final_assignee_id,
-        due_at=due_at,
+        due_at=final_due_at,
     )
     session.add(task)
     await session.commit()

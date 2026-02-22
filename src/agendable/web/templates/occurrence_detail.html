@@ -64,6 +64,10 @@
                 {% endfor %}
             </select>
         </label>
+        <label>
+            Due at (UTC)
+            <input name="due_at" type="datetime-local" value="{{ task_due_default_value }}" required />
+        </label>
         <button type="submit">Add task</button>
     </form>
     {% else %}
@@ -80,6 +84,7 @@
             {% endif %}
             {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
             <small>— {{ t.assignee.full_name }}</small>
+            <small>— due {{ t.due_at }}</small>
         </li>
         {% else %}
         <li><em>No tasks yet.</em></li>

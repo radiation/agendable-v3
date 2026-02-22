@@ -9,36 +9,20 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db.models import MeetingOccurrence, MeetingSeries, Task, User
-
-
-async def _login(client: AsyncClient, email: str, password: str) -> None:
-    resp = await client.post(
-        "/signup",
-        data={
-            "first_name": "Dash",
-            "last_name": "User",
-            "timezone": "UTC",
-            "email": email,
-            "password": password,
-        },
-        follow_redirects=True,
-    )
-    if resp.status_code == 200:
-        return
-
-    resp = await client.post(
-        "/login",
-        data={"email": email, "password": password},
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
+from agendable.testing.web_test_helpers import login_user
 
 
 @pytest.mark.asyncio
 async def test_dashboard_shows_upcoming_and_tasks_ordered_by_due_date(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "dash-owner@example.com", "pw-dash")
+    await login_user(
+        client,
+        "dash-owner@example.com",
+        "pw-dash",
+        first_name="Dash",
+        last_name="User",
+    )
 
     owner = (
         await db_session.execute(select(User).where(User.email == "dash-owner@example.com"))

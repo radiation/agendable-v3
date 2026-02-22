@@ -33,6 +33,7 @@ class MeetingOccurrenceRepository(BaseRepository[MeetingOccurrence]):
             .where(
                 MeetingOccurrence.series_id == series_id,
                 MeetingOccurrence.scheduled_at > scheduled_after,
+                MeetingOccurrence.is_completed.is_(False),
             )
             .order_by(MeetingOccurrence.scheduled_at.asc())
             .limit(1)
