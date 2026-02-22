@@ -36,6 +36,7 @@ The compose setup includes:
 
 - Postgres (`postgres:17`) with a persistent Docker volume (`postgres_data`)
 - Mailpit (`axllent/mailpit`) for local email capture/testing
+- `reminder-worker` service that runs `agendable run-reminders-worker` every 30s
 - A bind mount from local repo to container (`.:/app`)
 - Live reload command in the app container:
 	- `uvicorn agendable.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src`
@@ -69,7 +70,20 @@ Email reminders can be enabled by configuring SMTP env vars:
 - `AGENDABLE_SMTP_USE_SSL` (default `false`)
 - `AGENDABLE_SMTP_USE_STARTTLS` (default `true`)
 
+Reminder scheduling defaults:
+
+- `AGENDABLE_ENABLE_DEFAULT_EMAIL_REMINDERS` (default `true`)
+- `AGENDABLE_DEFAULT_EMAIL_REMINDER_MINUTES_BEFORE` (default `60`)
+- `AGENDABLE_REMINDER_WORKER_POLL_SECONDS` (default `60`)
+
+Per-series override:
+
+- When creating a series in the UI, set `Reminder lead (minutes)`.
+- That value is used for auto-created reminders on both generated and manually added occurrences.
+
 If SMTP is not configured, `run-reminders` uses a no-op sender for email reminders.
+
+When default reminders are enabled, each new meeting occurrence automatically gets an email reminder row.
 
 ### Migrations (Alembic)
 

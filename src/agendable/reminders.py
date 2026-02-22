@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import smtplib
-from dataclasses import dataclass
-from datetime import datetime
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from typing import Protocol
 
+from agendable.db.models import Reminder, ReminderChannel
 from agendable.settings import Settings
 
 
@@ -15,10 +17,39 @@ class ReminderEmail:
     recipient_email: str
     meeting_title: str
     scheduled_at: datetime
+    incomplete_tasks: list[str] = field(default_factory=list)
 
 
 class ReminderSender(Protocol):
     async def send_email_reminder(self, reminder: ReminderEmail) -> None: ...
+
+
+def as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def build_default_email_reminder(
+    occurrence_id: uuid.UUID,
+    occurrence_scheduled_at: datetime,
+    settings: Settings,
+    lead_minutes_before: int | None = None,
+) -> Reminder:
+    configured_minutes = (
+        settings.default_email_reminder_minutes_before
+        if lead_minutes_before is None
+        else lead_minutes_before
+    )
+    lead_minutes = max(configured_minutes, 0)
+    scheduled_at_utc = as_utc(occurrence_scheduled_at)
+    send_at = scheduled_at_utc - timedelta(minutes=lead_minutes)
+    return Reminder(
+        occurrence_id=occurrence_id,
+        channel=ReminderChannel.email,
+        send_at=send_at,
+        sent_at=None,
+    )
 
 
 class NoopReminderSender:
@@ -56,14 +87,18 @@ class SmtpReminderSender:
         message["Subject"] = f"Reminder: {reminder.meeting_title}"
         message["From"] = self.from_email
         message["To"] = reminder.recipient_email
-        message.set_content(
-            "\n".join(
-                [
-                    f"Reminder for: {reminder.meeting_title}",
-                    f"Scheduled at: {reminder.scheduled_at.isoformat()}",
-                ]
-            )
-        )
+        body_lines = [
+            f"Reminder for: {reminder.meeting_title}",
+            f"Scheduled at: {reminder.scheduled_at.isoformat()}",
+            "",
+            "Incomplete tasks:",
+        ]
+        if reminder.incomplete_tasks:
+            body_lines.extend([f"- {task_title}" for task_title in reminder.incomplete_tasks])
+        else:
+            body_lines.append("- None")
+
+        message.set_content("\n".join(body_lines))
 
         if self.use_ssl:
             with smtplib.SMTP_SSL(self.host, self.port, timeout=self.timeout_seconds) as smtp:

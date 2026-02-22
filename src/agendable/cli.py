@@ -9,14 +9,8 @@ from sqlalchemy.orm import selectinload
 
 import agendable.db as db
 from agendable.db.models import Base, MeetingOccurrence, MeetingSeries, Reminder, ReminderChannel
-from agendable.reminders import ReminderEmail, ReminderSender, build_reminder_sender
+from agendable.reminders import ReminderEmail, ReminderSender, as_utc, build_reminder_sender
 from agendable.settings import get_settings
-
-
-def _as_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
 
 
 async def _init_db() -> None:
@@ -33,7 +27,8 @@ async def _run_due_reminders(sender: ReminderSender | None = None) -> None:
             .options(
                 selectinload(Reminder.occurrence)
                 .selectinload(MeetingOccurrence.series)
-                .selectinload(MeetingSeries.owner)
+                .selectinload(MeetingSeries.owner),
+                selectinload(Reminder.occurrence).selectinload(MeetingOccurrence.tasks),
             )
             .where(Reminder.sent_at.is_(None))
             .order_by(Reminder.send_at.asc())
@@ -43,7 +38,7 @@ async def _run_due_reminders(sender: ReminderSender | None = None) -> None:
         sent = 0
         skipped = 0
         for reminder in reminders:
-            if _as_utc(reminder.send_at) > now:
+            if as_utc(reminder.send_at) > now:
                 continue
 
             if reminder.channel != ReminderChannel.email:
@@ -54,7 +49,10 @@ async def _run_due_reminders(sender: ReminderSender | None = None) -> None:
                 ReminderEmail(
                     recipient_email=reminder.occurrence.series.owner.email,
                     meeting_title=reminder.occurrence.series.title,
-                    scheduled_at=_as_utc(reminder.occurrence.scheduled_at),
+                    scheduled_at=as_utc(reminder.occurrence.scheduled_at),
+                    incomplete_tasks=[
+                        task.title for task in reminder.occurrence.tasks if not task.is_done
+                    ],
                 )
             )
             reminder.sent_at = now
@@ -65,12 +63,25 @@ async def _run_due_reminders(sender: ReminderSender | None = None) -> None:
     print(f"Sent {sent} reminders; skipped {skipped} reminders")
 
 
+async def _run_reminders_worker(poll_seconds: int) -> None:
+    while True:
+        await _run_due_reminders()
+        await asyncio.sleep(poll_seconds)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="agendable")
     sub = parser.add_subparsers(dest="cmd", required=True)
+    settings = get_settings()
 
     sub.add_parser("init-db")
     sub.add_parser("run-reminders")
+    worker = sub.add_parser("run-reminders-worker")
+    worker.add_argument(
+        "--poll-seconds",
+        type=int,
+        default=settings.reminder_worker_poll_seconds,
+    )
 
     args = parser.parse_args()
 
@@ -78,5 +89,8 @@ def main() -> None:
         asyncio.run(_init_db())
     elif args.cmd == "run-reminders":
         asyncio.run(_run_due_reminders())
+    elif args.cmd == "run-reminders-worker":
+        poll_seconds = max(1, int(args.poll_seconds))
+        asyncio.run(_run_reminders_worker(poll_seconds))
     else:
         raise SystemExit(2)

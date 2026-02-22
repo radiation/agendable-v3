@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     smtp_use_ssl: bool = False
     smtp_use_starttls: bool = True
     smtp_timeout_seconds: float = 10.0
+    enable_default_email_reminders: bool = True
+    default_email_reminder_minutes_before: int = 60
+    reminder_worker_poll_seconds: int = 60
 
     # Google OIDC (optional)
     google_client_id: str | None = None
