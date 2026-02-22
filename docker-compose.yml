@@ -37,10 +37,29 @@ services:
       AGENDABLE_SMTP_HOST: mailpit
       AGENDABLE_SMTP_PORT: "1025"
       AGENDABLE_SMTP_FROM_EMAIL: noreply@agendable.local
+      AGENDABLE_SMTP_USE_STARTTLS: "false"
       WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - ./:/app
     command: uvicorn agendable.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
+
+  reminder-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AGENDABLE_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/agendable
+      AGENDABLE_SMTP_HOST: mailpit
+      AGENDABLE_SMTP_PORT: "1025"
+      AGENDABLE_SMTP_FROM_EMAIL: noreply@agendable.local
+      AGENDABLE_SMTP_USE_STARTTLS: "false"
+      AGENDABLE_REMINDER_WORKER_POLL_SECONDS: "30"
+    volumes:
+      - ./:/app
+    command: agendable run-reminders-worker
 
 volumes:
   postgres_data:

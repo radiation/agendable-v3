@@ -100,6 +100,7 @@ class MeetingSeries(Base):
 
     title: Mapped[str] = mapped_column(String(200))
     default_interval_days: Mapped[int] = mapped_column(Integer, default=7)
+    reminder_minutes_before: Mapped[int] = mapped_column(Integer, default=60)
 
     # RRULE recurrence (optional; preferred over default_interval_days when present).
     recurrence_rrule: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -218,7 +219,7 @@ class Reminder(Base):
         ForeignKey("meeting_occurrence.id"), index=True
     )
 
-    channel: Mapped[ReminderChannel] = mapped_column(Enum(ReminderChannel))
+    channel: Mapped[ReminderChannel] = mapped_column(Enum(ReminderChannel, name="reminder_channel"))
     send_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

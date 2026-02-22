@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import agendable.db as db
 from agendable.cli import _run_due_reminders
-from agendable.db.models import MeetingOccurrence, MeetingSeries, Reminder, ReminderChannel, User
+from agendable.db.models import (
+    MeetingOccurrence,
+    MeetingSeries,
+    Reminder,
+    ReminderChannel,
+    Task,
+    User,
+)
 from agendable.reminders import ReminderEmail, ReminderSender
 
 
@@ -72,6 +79,29 @@ async def test_run_due_reminders_sends_due_email_and_marks_sent(db_session: Asyn
         sent_at=None,
     )
     db_session.add_all([due_reminder, future_reminder])
+    series = (
+        await db_session.execute(
+            select(MeetingSeries).where(MeetingSeries.id == occurrence.series_id)
+        )
+    ).scalar_one()
+    db_session.add_all(
+        [
+            Task(
+                occurrence_id=occurrence.id,
+                assigned_user_id=series.owner_user_id,
+                due_at=occurrence.scheduled_at,
+                title="Prepare agenda",
+                is_done=False,
+            ),
+            Task(
+                occurrence_id=occurrence.id,
+                assigned_user_id=series.owner_user_id,
+                due_at=occurrence.scheduled_at,
+                title="Already complete",
+                is_done=True,
+            ),
+        ]
+    )
     await db_session.commit()
 
     sender = CapturingSender(sent=[])
@@ -81,6 +111,7 @@ async def test_run_due_reminders_sends_due_email_and_marks_sent(db_session: Asyn
     sent_payload = sender.sent[0]
     assert sent_payload.recipient_email == "owner-reminder@example.com"
     assert sent_payload.meeting_title == "Weekly 1:1"
+    assert sent_payload.incomplete_tasks == ["Prepare agenda"]
 
     async with db.SessionMaker() as verify_session:
         refreshed_due = (
