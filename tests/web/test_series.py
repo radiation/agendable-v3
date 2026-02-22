@@ -9,31 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db.models import MeetingOccurrence, MeetingSeries, Reminder, ReminderChannel, User
-
-
-async def _login(client: AsyncClient, email: str, password: str) -> None:
-    # Tests run with a fresh DB; create the account explicitly.
-    resp = await client.post(
-        "/signup",
-        data={
-            "first_name": "Test",
-            "last_name": "User",
-            "timezone": "UTC",
-            "email": email,
-            "password": password,
-        },
-        follow_redirects=True,
-    )
-    if resp.status_code == 200:
-        return
-
-    # If the account already exists, sign in.
-    resp = await client.post(
-        "/login",
-        data={"email": email, "password": password},
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
+from agendable.testing.web_test_helpers import login_user
 
 
 @pytest.mark.asyncio
@@ -59,7 +35,7 @@ async def test_create_series_and_list_is_scoped_to_user(
 ) -> None:
     title = f"1:1 {uuid.uuid4()}"
 
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
     resp = await client.post(
         "/series",
@@ -93,7 +69,7 @@ async def test_create_series_and_list_is_scoped_to_user(
 
     # Logout + login as Bob: Alice's series should not be visible.
     await client.post("/logout", follow_redirects=True)
-    await _login(client, "bob@example.com", "pw-bob")
+    await login_user(client, "bob@example.com", "pw-bob")
 
     resp = await client.get("/")
     assert resp.status_code == 200
@@ -108,7 +84,7 @@ async def test_create_series_and_list_is_scoped_to_user(
 async def test_create_series_generates_occurrences(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
     title = f"Generate {uuid.uuid4()}"
     resp = await client.post(
@@ -164,7 +140,7 @@ def _as_utc(dt: datetime) -> datetime:
 async def test_create_series_auto_creates_email_reminders(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
     title = f"Reminders {uuid.uuid4()}"
     resp = await client.post(
@@ -229,7 +205,7 @@ async def test_create_series_auto_creates_email_reminders(
 async def test_manual_occurrence_creation_auto_creates_email_reminder(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
     title = f"Manual reminder {uuid.uuid4()}"
     create_resp = await client.post(

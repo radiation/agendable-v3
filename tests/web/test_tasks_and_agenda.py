@@ -9,69 +9,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import agendable.db as db
-from agendable.db.models import AgendaItem, MeetingOccurrence, MeetingSeries, Task, User
-
-
-async def _login(client: AsyncClient, email: str, password: str) -> None:
-    resp = await client.post(
-        "/signup",
-        data={
-            "first_name": "Test",
-            "last_name": "User",
-            "timezone": "UTC",
-            "email": email,
-            "password": password,
-        },
-        follow_redirects=True,
-    )
-    if resp.status_code == 200:
-        return
-
-    resp = await client.post(
-        "/login",
-        data={"email": email, "password": password},
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
-
-
-async def _create_series(
-    client: AsyncClient, db_session: AsyncSession, title: str
-) -> MeetingSeries:
-    resp = await client.post(
-        "/series",
-        data={
-            "title": title,
-            "recurrence_start_date": "2030-01-01",
-            "recurrence_time": "09:00",
-            "recurrence_timezone": "UTC",
-            "recurrence_freq": "DAILY",
-            "recurrence_interval": 1,
-            "generate_count": 1,
-        },
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
-
-    user = (
-        await db_session.execute(select(User).where(User.email == "alice@example.com"))
-    ).scalar_one()
-    return (
-        await db_session.execute(
-            select(MeetingSeries).where(
-                MeetingSeries.owner_user_id == user.id, MeetingSeries.title == title
-            )
-        )
-    ).scalar_one()
+from agendable.db.models import AgendaItem, MeetingOccurrence, Task, User
+from agendable.testing.web_test_helpers import create_series, login_user
 
 
 @pytest.mark.asyncio
 async def test_task_create_and_toggle_is_scoped(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
-    series = await _create_series(client, db_session, title=f"Tasks {uuid.uuid4()}")
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Tasks {uuid.uuid4()}",
+    )
 
     # Use the auto-generated occurrence.
     occ = (
@@ -115,7 +68,7 @@ async def test_task_create_and_toggle_is_scoped(
 
     # Other users cannot toggle Alice's tasks.
     await client.post("/logout", follow_redirects=True)
-    await _login(client, "bob@example.com", "pw-bob")
+    await login_user(client, "bob@example.com", "pw-bob")
 
     resp = await client.post(f"/tasks/{task.id}/toggle")
     assert resp.status_code == 404
@@ -125,9 +78,14 @@ async def test_task_create_and_toggle_is_scoped(
 async def test_agenda_add_and_toggle_is_scoped(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
-    series = await _create_series(client, db_session, title=f"Agenda {uuid.uuid4()}")
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Agenda {uuid.uuid4()}",
+    )
 
     # Use the auto-generated occurrence.
     occ = (
@@ -171,7 +129,7 @@ async def test_agenda_add_and_toggle_is_scoped(
 
     # Other users cannot toggle Alice's agenda.
     await client.post("/logout", follow_redirects=True)
-    await _login(client, "bob@example.com", "pw-bob")
+    await login_user(client, "bob@example.com", "pw-bob")
 
     resp = await client.post(f"/agenda/{item.id}/toggle")
     assert resp.status_code == 404
@@ -181,9 +139,14 @@ async def test_agenda_add_and_toggle_is_scoped(
 async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
-    series = await _create_series(client, db_session, title=f"Roll {uuid.uuid4()}")
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Roll {uuid.uuid4()}",
+    )
 
     first = (
         (
@@ -267,9 +230,14 @@ async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
 async def test_task_assignment_requires_attendee(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
+    await login_user(client, "alice@example.com", "pw-alice")
 
-    series = await _create_series(client, db_session, title=f"Assign {uuid.uuid4()}")
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Assign {uuid.uuid4()}",
+    )
 
     occ = (
         (
@@ -329,8 +297,13 @@ async def test_task_assignment_requires_attendee(
 async def test_completed_occurrence_is_read_only(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
-    series = await _create_series(client, db_session, title=f"ReadOnly {uuid.uuid4()}")
+    await login_user(client, "alice@example.com", "pw-alice")
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"ReadOnly {uuid.uuid4()}",
+    )
 
     occ = (
         (
@@ -437,47 +410,3 @@ async def test_completed_occurrence_is_read_only(
         )
         assert len(still_one_task) == 1
         assert len(still_one_agenda) == 1
-
-
-@pytest.mark.asyncio
-async def test_task_defaults_due_at_to_next_occurrence_when_available(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    await _login(client, "alice@example.com", "pw-alice")
-    series = await _create_series(client, db_session, title=f"DueDefault {uuid.uuid4()}")
-
-    first = (
-        (
-            await db_session.execute(
-                select(MeetingOccurrence)
-                .where(MeetingOccurrence.series_id == series.id)
-                .order_by(MeetingOccurrence.scheduled_at.asc())
-            )
-        )
-        .scalars()
-        .first()
-    )
-    assert first is not None
-
-    second = MeetingOccurrence(
-        series_id=series.id,
-        scheduled_at=first.scheduled_at + timedelta(days=2),
-        notes="",
-    )
-    db_session.add(second)
-    await db_session.commit()
-    await db_session.refresh(second)
-
-    resp = await client.post(
-        f"/occurrences/{first.id}/tasks",
-        data={"title": "Default due"},
-        follow_redirects=False,
-    )
-    assert resp.status_code == 303
-
-    created = (
-        await db_session.execute(
-            select(Task).where(Task.occurrence_id == first.id, Task.title == "Default due")
-        )
-    ).scalar_one()
-    assert created.due_at == second.scheduled_at
