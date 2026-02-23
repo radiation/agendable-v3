@@ -6,8 +6,6 @@ from authlib.integrations.starlette_client import OAuth
 
 from agendable.settings import get_settings
 
-GOOGLE_METADATA_URL = "https://accounts.google.com/.well-known/openid-configuration"
-
 
 @dataclass(frozen=True)
 class GoogleConfig:
@@ -32,6 +30,7 @@ def google_enabled() -> bool:
 
 def build_oauth() -> OAuth:
     oauth = OAuth()
+    settings = get_settings()
     cfg = get_google_config()
     if cfg is None:
         return oauth
@@ -40,7 +39,7 @@ def build_oauth() -> OAuth:
         name="google",
         client_id=cfg.client_id,
         client_secret=cfg.client_secret,
-        server_metadata_url=GOOGLE_METADATA_URL,
+        server_metadata_url=settings.google_metadata_url,
         client_kwargs={"scope": "openid email profile"},
     )
     return oauth

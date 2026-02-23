@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
+from agendable.web.routes import auth as auth_routes
+
 
 @pytest.mark.asyncio
 async def test_index_anonymous_redirects_to_login(client: AsyncClient) -> None:
@@ -12,7 +14,11 @@ async def test_index_anonymous_redirects_to_login(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_login_page_hides_google_when_disabled(client: AsyncClient) -> None:
+async def test_login_page_hides_google_when_disabled(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(auth_routes, "google_enabled", lambda: False)
+
     resp = await client.get("/login")
     assert resp.status_code == 200
     assert "Sign in with Google" not in resp.text

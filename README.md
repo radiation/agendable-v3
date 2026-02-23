@@ -129,6 +129,73 @@ Optional restriction:
 
 - `AGENDABLE_ALLOWED_EMAIL_DOMAIN='example.com'` (only allows `@example.com` users)
 
+#### Managed OIDC testing (Auth0 / Okta / any OIDC provider)
+
+You can test against non-Google providers without code changes by overriding metadata URL.
+
+Set:
+
+- `AGENDABLE_GOOGLE_CLIENT_ID='...'`
+- `AGENDABLE_GOOGLE_CLIENT_SECRET='...'`
+- `AGENDABLE_GOOGLE_METADATA_URL='https://<your-provider>/.well-known/openid-configuration'`
+
+Optional callback diagnostics:
+
+- `AGENDABLE_OIDC_DEBUG_LOGGING='true'`
+
+When enabled, the app logs OIDC callback decisions (claim presence/verification, domain gate, auto-provision vs linking) without logging tokens or secrets.
+Set it back to `false` (or unset it) after troubleshooting to reduce log noise.
+
+Keep callback URI configured in your provider app/client as:
+
+- `http://127.0.0.1:8000/auth/google/callback`
+
+Notes:
+
+- The app route path stays `/auth/google/*` for now, even when testing non-Google providers.
+- This is fine for development/staging SSO validation.
+
+#### Local OIDC testing with Keycloak (multiple test users)
+
+This repo includes an optional Keycloak service for local SSO and user-management testing.
+
+Start app stack + Keycloak profile:
+
+- `docker compose --profile sso up --build`
+
+Open Keycloak admin:
+
+- `http://127.0.0.1:8081/`
+- admin user: `admin`
+- admin password: `admin`
+
+Imported realm seed:
+
+- realm: `agendable`
+- client: `agendable-local`
+- client secret: `agendable-local-secret`
+- test users:
+	- `alice@example.com` / `Password123!`
+	- `bob@example.com` / `Password123!`
+
+Then set app env vars (for local `.env` or compose override):
+
+- `AGENDABLE_GOOGLE_CLIENT_ID='agendable-local'`
+- `AGENDABLE_GOOGLE_CLIENT_SECRET='agendable-local-secret'`
+- `AGENDABLE_GOOGLE_METADATA_URL='http://keycloak:8080/realms/agendable/.well-known/openid-configuration'` (inside Docker)
+
+The compose file uses a browser-facing hostname (`127.0.0.1:8081`) plus Keycloak backchannel-dynamic URLs so app-to-Keycloak token exchange from the `web` container works.
+
+If you change Keycloak hostname/env settings, recreate containers:
+
+- `docker compose --profile sso up --build --force-recreate`
+
+If running app outside Docker, use host URL instead:
+
+- `AGENDABLE_GOOGLE_METADATA_URL='http://127.0.0.1:8081/realms/agendable/.well-known/openid-configuration'`
+
+This gives you quick multi-user SSO validation without pilot users.
+
 ### Dev tooling
 
 - Format: `uv run ruff format .`

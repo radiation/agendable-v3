@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Google OIDC (optional)
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
+    google_metadata_url: str = "https://accounts.google.com/.well-known/openid-configuration"
+    oidc_debug_logging: bool = False
     # If set, only allow users with emails in this domain (e.g. "example.com").
     allowed_email_domain: str | None = None
 

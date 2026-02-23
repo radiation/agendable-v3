@@ -1,0 +1,58 @@
+{
+    "realm": "agendable",
+    "enabled": true,
+    "sslRequired": "none",
+    "registrationAllowed": false,
+    "users": [
+        {
+            "username": "alice",
+            "enabled": true,
+            "emailVerified": true,
+            "firstName": "Alice",
+            "lastName": "Example",
+            "email": "alice@example.com",
+            "credentials": [
+                {
+                    "type": "password",
+                    "value": "Password123!",
+                    "temporary": false
+                }
+            ]
+        },
+        {
+            "username": "bob",
+            "enabled": true,
+            "emailVerified": true,
+            "firstName": "Bob",
+            "lastName": "Example",
+            "email": "bob@example.com",
+            "credentials": [
+                {
+                    "type": "password",
+                    "value": "Password123!",
+                    "temporary": false
+                }
+            ]
+        }
+    ],
+    "clients": [
+        {
+            "clientId": "agendable-local",
+            "name": "Agendable Local",
+            "enabled": true,
+            "protocol": "openid-connect",
+            "publicClient": false,
+            "standardFlowEnabled": true,
+            "directAccessGrantsEnabled": false,
+            "redirectUris": [
+                "http://127.0.0.1:8000/auth/google/callback",
+                "http://localhost:8000/auth/google/callback"
+            ],
+            "webOrigins": [
+                "http://127.0.0.1:8000",
+                "http://localhost:8000"
+            ],
+            "secret": "agendable-local-secret"
+        }
+    ]
+}
