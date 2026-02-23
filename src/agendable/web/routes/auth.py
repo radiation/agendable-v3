@@ -21,6 +21,7 @@ from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
+_OIDC_LINK_USER_ID_SESSION_KEY = "oidc_link_user_id"
 
 
 def _is_bootstrap_admin_email(email: str) -> bool:
@@ -111,6 +112,24 @@ async def _get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
     return user
 
 
+def _get_oidc_link_user_id(request: Request) -> uuid.UUID | None:
+    raw = request.session.get(_OIDC_LINK_USER_ID_SESSION_KEY)
+    if raw is None:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
+def _set_oidc_link_user_id(request: Request, user_id: uuid.UUID) -> None:
+    request.session[_OIDC_LINK_USER_ID_SESSION_KEY] = str(user_id)
+
+
+def _clear_oidc_link_user_id(request: Request) -> None:
+    request.session.pop(_OIDC_LINK_USER_ID_SESSION_KEY, None)
+
+
 def _oidc_oauth_client() -> Any:
     return cast(Any, oauth).oidc
 
@@ -166,6 +185,30 @@ async def _provision_user_for_oidc(
     session.add(user)
     await session.flush()
     return user
+
+
+async def _render_profile_template(
+    request: Request,
+    *,
+    session: AsyncSession,
+    user: User,
+    identity_error: str | None,
+    status_code: int = 200,
+) -> Response:
+    ext_repo = ExternalIdentityRepository(session)
+    identities = await ext_repo.list_by_user_id(user.id)
+    return templates.TemplateResponse(
+        request,
+        "profile.html",
+        {
+            "user": user,
+            "current_user": user,
+            "identities": identities,
+            "identity_error": identity_error,
+            "oidc_enabled": oidc_enabled(),
+        },
+        status_code=status_code,
+    )
 
 
 @router.get("/login", response_class=Response)
@@ -307,6 +350,7 @@ async def oidc_callback(
 ) -> Response:
     settings = get_settings()
     debug_oidc = settings.oidc_debug_logging
+    link_user_id = _get_oidc_link_user_id(request)
 
     if not oidc_enabled():
         if debug_oidc:
@@ -320,6 +364,19 @@ async def oidc_callback(
     except OAuthError:
         if debug_oidc:
             logger.info("OIDC callback OAuthError during token/id token exchange")
+        if link_user_id is not None:
+            _clear_oidc_link_user_id(request)
+            try:
+                link_user = await _get_user_or_404(session, link_user_id)
+            except HTTPException:
+                return RedirectResponse(url="/login", status_code=303)
+            return await _render_profile_template(
+                request,
+                session=session,
+                user=link_user,
+                identity_error="SSO linking was cancelled or failed.",
+                status_code=400,
+            )
         return RedirectResponse(url="/login", status_code=303)
 
     token_keys: list[str] = [str(key) for key in token]
@@ -366,6 +423,19 @@ async def oidc_callback(
                 bool(email),
                 email_verified,
             )
+        if link_user_id is not None:
+            _clear_oidc_link_user_id(request)
+            try:
+                link_user = await _get_user_or_404(session, link_user_id)
+            except HTTPException:
+                return RedirectResponse(url="/login", status_code=303)
+            return await _render_profile_template(
+                request,
+                session=session,
+                user=link_user,
+                identity_error="SSO provider did not return required identity claims.",
+                status_code=403,
+            )
         return RedirectResponse(url="/login", status_code=303)
 
     if settings.allowed_email_domain is not None:
@@ -384,6 +454,43 @@ async def oidc_callback(
             )
 
     ext_repo = ExternalIdentityRepository(session)
+
+    if link_user_id is not None:
+        link_user = await _get_user_or_404(session, link_user_id)
+        if not link_user.is_active:
+            _clear_oidc_link_user_id(request)
+            return RedirectResponse(url="/login", status_code=303)
+
+        ext = await ext_repo.get_by_provider_subject("oidc", sub)
+        if ext is not None and ext.user_id != link_user.id:
+            _clear_oidc_link_user_id(request)
+            return await _render_profile_template(
+                request,
+                session=session,
+                user=link_user,
+                identity_error="This SSO account is already linked to a different user.",
+                status_code=403,
+            )
+
+        if email != link_user.email:
+            _clear_oidc_link_user_id(request)
+            return await _render_profile_template(
+                request,
+                session=session,
+                user=link_user,
+                identity_error="SSO account email must match your profile email.",
+                status_code=403,
+            )
+
+        if ext is None:
+            ext = ExternalIdentity(user_id=link_user.id, provider="oidc", subject=sub, email=email)
+            session.add(ext)
+            await session.commit()
+
+        _clear_oidc_link_user_id(request)
+        request.session["user_id"] = str(link_user.id)
+        return RedirectResponse(url="/profile", status_code=303)
+
     ext = await ext_repo.get_by_provider_subject("oidc", sub)
 
     if ext is not None:
@@ -460,15 +567,74 @@ async def profile(
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
     user = await _get_user_or_404(session, current_user.id)
-
-    return templates.TemplateResponse(
-        request,
-        "profile.html",
-        {
-            "user": user,
-            "current_user": user,
-        },
+    return cast(
+        HTMLResponse,
+        await _render_profile_template(
+            request,
+            session=session,
+            user=user,
+            identity_error=None,
+        ),
     )
+
+
+@router.post(
+    "/profile/identities/link/start",
+    response_class=RedirectResponse,
+)
+async def start_profile_identity_link(
+    request: Request,
+    password: str = Form(""),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> Response:
+    if not oidc_enabled():
+        raise HTTPException(status_code=404)
+
+    user = await _get_user_or_404(session, current_user.id)
+    if user.password_hash is not None and not verify_password(password, user.password_hash):
+        return await _render_profile_template(
+            request,
+            session=session,
+            user=user,
+            identity_error="Enter your current password to link an SSO account.",
+            status_code=401,
+        )
+
+    _set_oidc_link_user_id(request, user.id)
+    return RedirectResponse(url="/auth/oidc/start", status_code=303)
+
+
+@router.post(
+    "/profile/identities/{identity_id}/unlink",
+    response_class=RedirectResponse,
+)
+async def unlink_profile_identity(
+    request: Request,
+    identity_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> Response:
+    user = await _get_user_or_404(session, current_user.id)
+    ext_repo = ExternalIdentityRepository(session)
+
+    identity = await ext_repo.get(identity_id)
+    if identity is None or identity.user_id != user.id:
+        raise HTTPException(status_code=404)
+
+    identities = await ext_repo.list_by_user_id(user.id)
+    if user.password_hash is None and len(identities) <= 1:
+        return await _render_profile_template(
+            request,
+            session=session,
+            user=user,
+            identity_error="You cannot unlink your only sign-in method.",
+            status_code=400,
+        )
+
+    await ext_repo.delete(identity, flush=False)
+    await session.commit()
+    return RedirectResponse(url="/profile", status_code=303)
 
 
 @router.post("/profile", response_class=RedirectResponse)

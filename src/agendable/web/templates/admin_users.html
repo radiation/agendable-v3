@@ -18,6 +18,7 @@
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
+                <th>Linked SSO</th>
                 <th>Actions</th>
             </tr>
         </thead>
@@ -28,6 +29,14 @@
                 <td><small>{{ user.email }}</small></td>
                 <td>{{ user.role.value }}</td>
                 <td>{% if user.is_active %}active{% else %}inactive{% endif %}</td>
+                <td>
+                    {% set count = identity_counts.get(user.id, 0) %}
+                    {% if count %}
+                    {{ count }} linked ({{ identity_providers.get(user.id, [])|join(", ") }})
+                    {% else %}
+                    none
+                    {% endif %}
+                </td>
                 <td>
                     <form method="post" action="/admin/users/{{ user.id }}/role" style="display:inline;">
                         <select name="role">
@@ -51,7 +60,7 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="5"><em>No users found.</em></td>
+                <td colspan="6"><em>No users found.</em></td>
             </tr>
             {% endfor %}
         </tbody>

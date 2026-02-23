@@ -46,6 +46,41 @@
         <li><strong>Timezone:</strong> {{ user.timezone }}</li>
         <li><strong>Created:</strong> {{ user.created_at }}</li>
     </ul>
+
+    <h3>Linked sign-in methods</h3>
+    {% if identity_error %}
+    <p><strong>{{ identity_error }}</strong></p>
+    {% endif %}
+
+    {% if oidc_enabled %}
+    <form method="post" action="/profile/identities/link/start"
+        style="margin-bottom: .75rem; display:grid; gap: .5rem; max-width: 24rem;">
+        {% if user.password_hash %}
+        <label>
+            Current password
+            <input type="password" name="password" required />
+        </label>
+        {% endif %}
+        <div>
+            <button type="submit">Link SSO account</button>
+        </div>
+    </form>
+    {% endif %}
+
+    <ul>
+        {% for identity in identities %}
+        <li>
+            <strong>{{ identity.provider }}</strong>
+            <small>— {{ identity.email or user.email }}</small>
+            <form method="post" action="/profile/identities/{{ identity.id }}/unlink"
+                style="display:inline; margin-left: .5rem;">
+                <button type="submit">Unlink</button>
+            </form>
+        </li>
+        {% else %}
+        <li><em>No external sign-in methods linked.</em></li>
+        {% endfor %}
+    </ul>
 </section>
 
 <script>

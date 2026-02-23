@@ -149,6 +149,9 @@ Keep callback URI configured in your provider app/client as:
 Notes:
 
 - The app route path is `/auth/oidc/*`.
+- Users can explicitly link an SSO identity from `Profile` via **Link SSO account**.
+	- Password-based accounts must confirm current password before starting the link flow.
+	- Unlinking is blocked when it would remove the user's only sign-in method.
 
 #### Local OIDC testing with Keycloak (multiple test users)
 

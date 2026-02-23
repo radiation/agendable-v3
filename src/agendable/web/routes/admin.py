@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -10,7 +11,7 @@ from starlette.responses import Response
 from agendable.auth import require_admin
 from agendable.db import get_session
 from agendable.db.models import User, UserRole
-from agendable.db.repos import UserRepository
+from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.web.routes.common import templates
 
 router = APIRouter()
@@ -27,14 +28,40 @@ async def _load_user_or_404(users_repo: UserRepository, user_id: uuid.UUID) -> U
     return user
 
 
-@router.get("/admin/users", response_class=HTMLResponse)
-async def admin_users(
+async def _external_identity_summaries(
+    ext_repo: ExternalIdentityRepository,
+    *,
+    user_ids: list[uuid.UUID],
+) -> tuple[dict[uuid.UUID, int], dict[uuid.UUID, list[str]]]:
+    identities = await ext_repo.list_by_user_ids(user_ids)
+    counts: dict[uuid.UUID, int] = defaultdict(int)
+    providers: dict[uuid.UUID, list[str]] = defaultdict(list)
+
+    for identity in identities:
+        counts[identity.user_id] += 1
+        if identity.provider not in providers[identity.user_id]:
+            providers[identity.user_id].append(identity.provider)
+
+    return dict(counts), dict(providers)
+
+
+async def _render_admin_users_template(
     request: Request,
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(require_admin),
+    *,
+    session: AsyncSession,
+    current_user: User,
+    error: str | None,
+    status_code: int = 200,
 ) -> HTMLResponse:
     users_repo = UserRepository(session)
+    ext_repo = ExternalIdentityRepository(session)
+
     users = await users_repo.list(limit=1000)
+    user_ids = [user.id for user in users]
+    identity_counts, identity_providers = await _external_identity_summaries(
+        ext_repo,
+        user_ids=user_ids,
+    )
 
     return templates.TemplateResponse(
         request,
@@ -42,8 +69,25 @@ async def admin_users(
         {
             "users": users,
             "current_user": current_user,
-            "error": None,
+            "error": error,
+            "identity_counts": identity_counts,
+            "identity_providers": identity_providers,
         },
+        status_code=status_code,
+    )
+
+
+@router.get("/admin/users", response_class=HTMLResponse)
+async def admin_users(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_admin),
+) -> HTMLResponse:
+    return await _render_admin_users_template(
+        request,
+        session=session,
+        current_user=current_user,
+        error=None,
     )
 
 
@@ -64,15 +108,11 @@ async def admin_update_user_role(
         raise HTTPException(status_code=400, detail="Invalid role") from None
 
     if user.id == current_user.id and new_role != UserRole.admin:
-        users = await users_repo.list(limit=1000)
-        return templates.TemplateResponse(
+        return await _render_admin_users_template(
             request,
-            "admin_users.html",
-            {
-                "users": users,
-                "current_user": current_user,
-                "error": "You cannot remove your own admin role.",
-            },
+            session=session,
+            current_user=current_user,
+            error="You cannot remove your own admin role.",
             status_code=400,
         )
 
@@ -94,15 +134,11 @@ async def admin_update_user_active(
 
     new_is_active = _parse_bool(is_active)
     if user.id == current_user.id and not new_is_active:
-        users = await users_repo.list(limit=1000)
-        return templates.TemplateResponse(
+        return await _render_admin_users_template(
             request,
-            "admin_users.html",
-            {
-                "users": users,
-                "current_user": current_user,
-                "error": "You cannot deactivate your own account.",
-            },
+            session=session,
+            current_user=current_user,
+            error="You cannot deactivate your own account.",
             status_code=400,
         )
 
