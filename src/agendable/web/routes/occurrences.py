@@ -25,10 +25,10 @@ from agendable.db.repos import (
     TaskRepository,
     UserRepository,
 )
-from agendable.recurrence import describe_recurrence
 from agendable.web.routes.common import (
     format_datetime_local_value,
     parse_dt_for_timezone,
+    recurrence_label,
     templates,
 )
 
@@ -117,14 +117,11 @@ async def occurrence_detail(
         "occurrence_detail.html",
         {
             "series": series,
-            "recurrence_label": (
-                describe_recurrence(
-                    rrule=series.recurrence_rrule,
-                    dtstart=series.recurrence_dtstart,
-                    timezone=series.recurrence_timezone,
-                )
-                if series.recurrence_rrule
-                else f"Every {series.default_interval_days} days"
+            "recurrence_label": recurrence_label(
+                recurrence_rrule=series.recurrence_rrule,
+                recurrence_dtstart=series.recurrence_dtstart,
+                recurrence_timezone=series.recurrence_timezone,
+                default_interval_days=series.default_interval_days,
             ),
             "occurrence": occurrence,
             "tasks": tasks,

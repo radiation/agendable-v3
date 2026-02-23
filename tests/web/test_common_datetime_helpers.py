@@ -11,6 +11,7 @@ from agendable.web.routes.common import (
     parse_dt,
     parse_dt_for_timezone,
     parse_timezone,
+    recurrence_label,
 )
 
 
@@ -86,3 +87,23 @@ def test_format_datetime_local_value_falls_back_to_utc_for_unknown_timezone() ->
     dt = datetime(2030, 1, 1, 21, 0, tzinfo=UTC)
     value = format_datetime_local_value(dt, "Unknown/Zone")
     assert value == "2030-01-01T21:00"
+
+
+def test_recurrence_label_defaults_when_rrule_missing() -> None:
+    label = recurrence_label(
+        recurrence_rrule=None,
+        recurrence_dtstart=None,
+        recurrence_timezone=None,
+        default_interval_days=7,
+    )
+    assert label == "Every 7 days"
+
+
+def test_recurrence_label_uses_rrule_when_present() -> None:
+    label = recurrence_label(
+        recurrence_rrule="FREQ=DAILY;INTERVAL=1",
+        recurrence_dtstart=datetime(2030, 1, 1, 9, 0, tzinfo=UTC),
+        recurrence_timezone="UTC",
+        default_interval_days=7,
+    )
+    assert "Daily" in label

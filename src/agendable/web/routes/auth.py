@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import cast
+import uuid
+from collections.abc import Mapping
+from typing import Any, cast
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -36,23 +38,92 @@ async def _maybe_promote_bootstrap_admin(user: User, session: AsyncSession) -> N
     await session.commit()
 
 
-@router.get("/login", response_class=Response)
-async def login_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
-    try:
-        _ = await require_user(request, session)
-        return RedirectResponse(url="/dashboard", status_code=303)
-    except HTTPException:
-        pass
-
+def _render_login_template(
+    request: Request,
+    *,
+    error: str | None,
+    status_code: int = 200,
+) -> Response:
     return templates.TemplateResponse(
         request,
         "login.html",
         {
-            "error": None,
+            "error": error,
             "current_user": None,
             "google_enabled": google_enabled(),
         },
+        status_code=status_code,
     )
+
+
+def _signup_form_context(
+    *,
+    first_name: str = "",
+    last_name: str = "",
+    timezone: str = "UTC",
+    email: str = "",
+) -> dict[str, str]:
+    return {
+        "first_name": first_name,
+        "last_name": last_name,
+        "timezone": timezone,
+        "email": email,
+    }
+
+
+def _render_signup_template(
+    request: Request,
+    *,
+    error: str | None,
+    form: dict[str, str] | None = None,
+    status_code: int = 200,
+) -> Response:
+    return templates.TemplateResponse(
+        request,
+        "signup.html",
+        {
+            "error": error,
+            "current_user": None,
+            "form": form or _signup_form_context(),
+        },
+        status_code=status_code,
+    )
+
+
+async def _redirect_if_authenticated(
+    request: Request,
+    session: AsyncSession,
+) -> RedirectResponse | None:
+    try:
+        _ = await require_user(request, session)
+        return RedirectResponse(url="/dashboard", status_code=303)
+    except HTTPException:
+        return None
+
+
+async def _get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
+    users = UserRepository(session)
+    user = await users.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404)
+    return user
+
+
+def _google_oauth_client() -> Any:
+    return cast(Any, oauth).google
+
+
+def _as_userinfo_mapping(value: object) -> Mapping[str, object]:
+    return cast(Mapping[str, object], value)
+
+
+@router.get("/login", response_class=Response)
+async def login_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
+    redirect_response = await _redirect_if_authenticated(request, session)
+    if redirect_response is not None:
+        return redirect_response
+
+    return _render_login_template(request, error=None)
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -68,26 +139,16 @@ async def login(
     user = await users.get_by_email(normalized_email)
 
     if user is None:
-        return templates.TemplateResponse(
+        return _render_login_template(
             request,
-            "login.html",
-            {
-                "error": "Account not found. Create one first.",
-                "current_user": None,
-                "google_enabled": google_enabled(),
-            },
+            error="Account not found. Create one first.",
             status_code=401,
         )
 
     if user.password_hash is None or not verify_password(password, user.password_hash):
-        return templates.TemplateResponse(
+        return _render_login_template(
             request,
-            "login.html",
-            {
-                "error": "Invalid email or password",
-                "current_user": None,
-                "google_enabled": google_enabled(),
-            },
+            error="Invalid email or password",
             status_code=401,
         )
 
@@ -99,26 +160,11 @@ async def login(
 
 @router.get("/signup", response_class=Response)
 async def signup_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
-    try:
-        _ = await require_user(request, session)
-        return RedirectResponse(url="/dashboard", status_code=303)
-    except HTTPException:
-        pass
+    redirect_response = await _redirect_if_authenticated(request, session)
+    if redirect_response is not None:
+        return redirect_response
 
-    return templates.TemplateResponse(
-        request,
-        "signup.html",
-        {
-            "error": None,
-            "current_user": None,
-            "form": {
-                "first_name": "",
-                "last_name": "",
-                "timezone": "UTC",
-                "email": "",
-            },
-        },
-    )
+    return _render_signup_template(request, error=None)
 
 
 @router.post("/signup", response_class=HTMLResponse)
@@ -144,19 +190,15 @@ async def signup(
     users = UserRepository(session)
     existing = await users.get_by_email(normalized_email)
     if existing is not None:
-        return templates.TemplateResponse(
+        return _render_signup_template(
             request,
-            "signup.html",
-            {
-                "error": "Account already exists. Sign in instead.",
-                "current_user": None,
-                "form": {
-                    "first_name": normalized_first_name,
-                    "last_name": normalized_last_name,
-                    "timezone": normalized_timezone,
-                    "email": normalized_email,
-                },
-            },
+            error="Account already exists. Sign in instead.",
+            form=_signup_form_context(
+                first_name=normalized_first_name,
+                last_name=normalized_last_name,
+                timezone=normalized_timezone,
+                email=normalized_email,
+            ),
             status_code=400,
         )
 
@@ -183,7 +225,8 @@ async def google_start(request: Request) -> Response:
         raise HTTPException(status_code=404)
 
     redirect_uri = str(request.url_for("google_callback"))
-    return cast(Response, await oauth.google.authorize_redirect(request, redirect_uri))
+    google_client = _google_oauth_client()
+    return cast(Response, await google_client.authorize_redirect(request, redirect_uri))
 
 
 @router.get("/auth/google/callback", name="google_callback")
@@ -194,9 +237,11 @@ async def google_callback(
     if not google_enabled():
         raise HTTPException(status_code=404)
 
+    google_client = _google_oauth_client()
+
     try:
-        token = await oauth.google.authorize_access_token(request)
-        userinfo = await oauth.google.parse_id_token(request, token)
+        token = await google_client.authorize_access_token(request)
+        userinfo = _as_userinfo_mapping(await google_client.parse_id_token(request, token))
     except OAuthError:
         return RedirectResponse(url="/login", status_code=303)
 
@@ -211,14 +256,9 @@ async def google_callback(
     if settings.allowed_email_domain is not None:
         allowed = settings.allowed_email_domain.strip().lower().lstrip("@")
         if not email.endswith(f"@{allowed}"):
-            return templates.TemplateResponse(
+            return _render_login_template(
                 request,
-                "login.html",
-                {
-                    "error": "Email domain not allowed",
-                    "current_user": None,
-                    "google_enabled": google_enabled(),
-                },
+                error="Email domain not allowed",
                 status_code=403,
             )
 
@@ -234,14 +274,9 @@ async def google_callback(
         users = UserRepository(session)
         user = await users.get_by_email(email)
         if user is None:
-            return templates.TemplateResponse(
+            return _render_login_template(
                 request,
-                "login.html",
-                {
-                    "error": "Account not found. Create one first.",
-                    "current_user": None,
-                    "google_enabled": google_enabled(),
-                },
+                error="Account not found. Create one first.",
                 status_code=403,
             )
 
@@ -267,10 +302,7 @@ async def profile(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    users = UserRepository(session)
-    user = await users.get_by_id(current_user.id)
-    if user is None:
-        raise HTTPException(status_code=404)
+    user = await _get_user_or_404(session, current_user.id)
 
     return templates.TemplateResponse(
         request,
@@ -292,10 +324,7 @@ async def update_profile(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    users = UserRepository(session)
-    user = await users.get_by_id(current_user.id)
-    if user is None:
-        raise HTTPException(status_code=404)
+    user = await _get_user_or_404(session, current_user.id)
 
     normalized_first_name = first_name.strip()
     normalized_last_name = last_name.strip()

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException
 from fastapi.templating import Jinja2Templates
 
+from agendable.recurrence import describe_recurrence
 from agendable.sso_google import build_oauth
 
 _COMMON_TIMEZONES: tuple[tuple[str, str], ...] = (
@@ -139,6 +140,22 @@ def format_datetime_local_value(value: datetime, timezone_name: str | None) -> s
         target_zone = UTC
 
     return dt_utc.astimezone(target_zone).strftime("%Y-%m-%dT%H:%M")
+
+
+def recurrence_label(
+    *,
+    recurrence_rrule: str | None,
+    recurrence_dtstart: datetime | None,
+    recurrence_timezone: str | None,
+    default_interval_days: int,
+) -> str:
+    if recurrence_rrule:
+        return describe_recurrence(
+            rrule=recurrence_rrule,
+            dtstart=recurrence_dtstart,
+            timezone=recurrence_timezone,
+        )
+    return f"Every {default_interval_days} days"
 
 
 templates_dir = Path(__file__).resolve().parent.parent / "templates"

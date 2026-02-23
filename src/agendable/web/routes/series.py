@@ -12,10 +12,17 @@ from agendable.auth import require_user
 from agendable.db import get_session
 from agendable.db.models import MeetingOccurrence, MeetingSeries, User
 from agendable.db.repos import MeetingOccurrenceRepository, MeetingSeriesRepository
-from agendable.recurrence import build_rrule, describe_recurrence, generate_datetimes
+from agendable.recurrence import build_rrule, generate_datetimes
 from agendable.reminders import build_default_email_reminder
 from agendable.settings import get_settings
-from agendable.web.routes.common import parse_date, parse_dt, parse_time, parse_timezone, templates
+from agendable.web.routes.common import (
+    parse_date,
+    parse_dt,
+    parse_time,
+    parse_timezone,
+    recurrence_label,
+    templates,
+)
 
 router = APIRouter()
 
@@ -30,14 +37,11 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)) 
     series_repo = MeetingSeriesRepository(session)
     series = await series_repo.list_for_owner(current_user.id)
     series_recurrence = {
-        s.id: (
-            describe_recurrence(
-                rrule=s.recurrence_rrule,
-                dtstart=s.recurrence_dtstart,
-                timezone=s.recurrence_timezone,
-            )
-            if s.recurrence_rrule
-            else f"Every {s.default_interval_days} days"
+        s.id: recurrence_label(
+            recurrence_rrule=s.recurrence_rrule,
+            recurrence_dtstart=s.recurrence_dtstart,
+            recurrence_timezone=s.recurrence_timezone,
+            default_interval_days=s.default_interval_days,
         )
         for s in series
     }
@@ -196,14 +200,11 @@ async def series_detail(
         "series_detail.html",
         {
             "series": series,
-            "recurrence_label": (
-                describe_recurrence(
-                    rrule=series.recurrence_rrule,
-                    dtstart=series.recurrence_dtstart,
-                    timezone=series.recurrence_timezone,
-                )
-                if series.recurrence_rrule
-                else f"Every {series.default_interval_days} days"
+            "recurrence_label": recurrence_label(
+                recurrence_rrule=series.recurrence_rrule,
+                recurrence_dtstart=series.recurrence_dtstart,
+                recurrence_timezone=series.recurrence_timezone,
+                default_interval_days=series.default_interval_days,
             ),
             "occurrences": occurrences,
             "active_occurrence": active_occurrence,
