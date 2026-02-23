@@ -442,3 +442,47 @@ async def test_profile_link_callback_rejects_identity_linked_to_other_user(
         .all()
     )
     assert owner_links == []
+
+
+@pytest.mark.asyncio
+async def test_profile_link_callback_handles_deleted_linking_user(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv(
+        "AGENDABLE_OIDC_METADATA_URL", "https://example.com/.well-known/openid-configuration"
+    )
+
+    await _signup_and_login(
+        client,
+        first_name="Link",
+        last_name="Deleted",
+        email="link-deleted@example.com",
+    )
+    user = await _get_user_by_email(db_session, "link-deleted@example.com")
+
+    fake_client = _FakeOidcLinkClient(
+        {
+            "sub": "sub-link-deleted",
+            "email": "link-deleted@example.com",
+            "email_verified": True,
+        }
+    )
+    monkeypatch.setattr(auth_routes, "_oidc_oauth_client", lambda: fake_client)
+
+    start = await client.post(
+        "/profile/identities/link/start",
+        data={"password": "pw123456"},
+        follow_redirects=False,
+    )
+    assert start.status_code == 303
+
+    await db_session.delete(user)
+    await db_session.commit()
+
+    callback = await client.get("/auth/oidc/callback", follow_redirects=False)
+    assert callback.status_code == 303
+    assert callback.headers["location"] == "/login"

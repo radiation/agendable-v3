@@ -7,109 +7,12 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.auth import hash_password
-from agendable.db.models import User, UserRole
-
-
-@pytest.mark.asyncio
-async def test_admin_users_requires_admin_role(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    resp = await client.post(
-        "/signup",
-        data={
-            "first_name": "Alice",
-            "last_name": "Example",
-            "timezone": "UTC",
-            "email": "alice-admin-test@example.com",
-            "password": "pw123456",
-        },
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
-
-    denied = await client.get("/admin/users")
-    assert denied.status_code == 403
-
-    alice = (
-        await db_session.execute(select(User).where(User.email == "alice-admin-test@example.com"))
-    ).scalar_one()
-    alice.role = UserRole.admin
-    await db_session.commit()
-
-    allowed = await client.get("/admin/users")
-    assert allowed.status_code == 200
-    assert "Users" in allowed.text
-    assert "alice-admin-test@example.com" in allowed.text
-
-
-@pytest.mark.asyncio
-async def test_bootstrap_admin_email_auto_promotes_user(
-    client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("AGENDABLE_BOOTSTRAP_ADMIN_EMAIL", "bootstrap-admin@example.com")
-
-    resp = await client.post(
-        "/signup",
-        data={
-            "first_name": "Bootstrap",
-            "last_name": "Admin",
-            "timezone": "UTC",
-            "email": "bootstrap-admin@example.com",
-            "password": "pw123456",
-        },
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
-
-    user = (
-        await db_session.execute(select(User).where(User.email == "bootstrap-admin@example.com"))
-    ).scalar_one()
-    assert user.role == UserRole.admin
-
-    admin_page = await client.get("/admin/users")
-    assert admin_page.status_code == 200
-
-
-async def _promote_signed_in_user_to_admin(
-    db_session: AsyncSession,
-    *,
-    email: str,
-) -> User:
-    user = (await db_session.execute(select(User).where(User.email == email))).scalar_one()
-    user.role = UserRole.admin
-    await db_session.commit()
-    return user
-
-
-async def _create_user(
-    db_session: AsyncSession,
-    *,
-    email: str,
-    first_name: str,
-    last_name: str,
-    password: str,
-) -> User:
-    user = User(
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-        display_name=f"{first_name} {last_name}",
-        timezone="UTC",
-        password_hash=hash_password(password),
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
-
-
-async def _get_user_by_id(db_session: AsyncSession, user_id: uuid.UUID) -> User:
-    return (
-        await db_session.execute(
-            select(User).where(User.id == user_id).execution_options(populate_existing=True)
-        )
-    ).scalar_one()
+from agendable.db.models import User
+from tests.auth.admin_test_helpers import (
+    create_user,
+    get_user_by_id,
+    promote_signed_in_user_to_admin,
+)
 
 
 @pytest.mark.asyncio
@@ -129,10 +32,10 @@ async def test_admin_can_update_role_and_active_status(
     )
     assert signup.status_code == 200
 
-    admin_user = await _promote_signed_in_user_to_admin(
+    admin_user = await promote_signed_in_user_to_admin(
         db_session, email="admin-actions@example.com"
     )
-    managed_user = await _create_user(
+    managed_user = await create_user(
         db_session,
         email="managed-user@example.com",
         first_name="Managed",
@@ -147,8 +50,8 @@ async def test_admin_can_update_role_and_active_status(
     )
     assert role_resp.status_code == 200
 
-    promoted = await _get_user_by_id(db_session, managed_user.id)
-    assert promoted.role == UserRole.admin
+    promoted = await get_user_by_id(db_session, managed_user.id)
+    assert promoted.role.value == "admin"
 
     deactivate_resp = await client.post(
         f"/admin/users/{managed_user.id}/active",
@@ -157,7 +60,7 @@ async def test_admin_can_update_role_and_active_status(
     )
     assert deactivate_resp.status_code == 200
 
-    deactivated = await _get_user_by_id(db_session, managed_user.id)
+    deactivated = await get_user_by_id(db_session, managed_user.id)
     assert deactivated.is_active is False
 
     reactivate_resp = await client.post(
@@ -167,7 +70,7 @@ async def test_admin_can_update_role_and_active_status(
     )
     assert reactivate_resp.status_code == 200
 
-    reactivated = await _get_user_by_id(db_session, managed_user.id)
+    reactivated = await get_user_by_id(db_session, managed_user.id)
     assert reactivated.is_active is True
 
     self_deactivate = await client.post(
@@ -196,8 +99,8 @@ async def test_deactivated_user_cannot_sign_in(
     )
     assert signup.status_code == 200
 
-    _ = await _promote_signed_in_user_to_admin(db_session, email="admin-disable@example.com")
-    managed_user = await _create_user(
+    _ = await promote_signed_in_user_to_admin(db_session, email="admin-disable@example.com")
+    managed_user = await create_user(
         db_session,
         email="disabled-login@example.com",
         first_name="Disabled",
@@ -241,7 +144,7 @@ async def test_admin_mutations_require_admin_role(
     )
     assert signup.status_code == 200
 
-    target = await _create_user(
+    target = await create_user(
         db_session,
         email="target-admin-guard@example.com",
         first_name="Target",
@@ -281,7 +184,7 @@ async def test_admin_cannot_remove_own_admin_role(
     )
     assert signup.status_code == 200
 
-    admin_user = await _promote_signed_in_user_to_admin(db_session, email="self-demote@example.com")
+    admin_user = await promote_signed_in_user_to_admin(db_session, email="self-demote@example.com")
 
     demote_resp = await client.post(
         f"/admin/users/{admin_user.id}/role",
@@ -291,8 +194,8 @@ async def test_admin_cannot_remove_own_admin_role(
     assert demote_resp.status_code == 400
     assert "You cannot remove your own admin role." in demote_resp.text
 
-    refreshed = await _get_user_by_id(db_session, admin_user.id)
-    assert refreshed.role == UserRole.admin
+    refreshed = await get_user_by_id(db_session, admin_user.id)
+    assert refreshed.role.value == "admin"
 
 
 @pytest.mark.asyncio
@@ -311,9 +214,9 @@ async def test_admin_role_update_invalid_input_and_missing_user(
         follow_redirects=True,
     )
     assert signup.status_code == 200
-    _ = await _promote_signed_in_user_to_admin(db_session, email="invalid-role-admin@example.com")
+    _ = await promote_signed_in_user_to_admin(db_session, email="invalid-role-admin@example.com")
 
-    target = await _create_user(
+    target = await create_user(
         db_session,
         email="invalid-role-target@example.com",
         first_name="Invalid",
@@ -379,7 +282,7 @@ async def test_admin_active_update_missing_user_returns_404(
         follow_redirects=True,
     )
     assert signup.status_code == 200
-    _ = await _promote_signed_in_user_to_admin(db_session, email="missing-active-admin@example.com")
+    _ = await promote_signed_in_user_to_admin(db_session, email="missing-active-admin@example.com")
 
     missing_user_resp = await client.post(
         f"/admin/users/{uuid.uuid4()}/active",
@@ -405,9 +308,9 @@ async def test_admin_active_update_accepts_truthy_forms(
         follow_redirects=True,
     )
     assert signup.status_code == 200
-    _ = await _promote_signed_in_user_to_admin(db_session, email="truthy-admin@example.com")
+    _ = await promote_signed_in_user_to_admin(db_session, email="truthy-admin@example.com")
 
-    target = await _create_user(
+    target = await create_user(
         db_session,
         email="truthy-target@example.com",
         first_name="Truthy",
@@ -429,32 +332,5 @@ async def test_admin_active_update_accepts_truthy_forms(
     )
     assert enable_with_yes.status_code == 200
 
-    refreshed = await _get_user_by_id(db_session, target.id)
+    refreshed = await get_user_by_id(db_session, target.id)
     assert refreshed.is_active is True
-
-
-@pytest.mark.asyncio
-async def test_inactive_admin_cannot_access_admin_users(
-    client: AsyncClient, db_session: AsyncSession
-) -> None:
-    signup = await client.post(
-        "/signup",
-        data={
-            "first_name": "Inactive",
-            "last_name": "Admin",
-            "timezone": "UTC",
-            "email": "inactive-admin@example.com",
-            "password": "pw123456",
-        },
-        follow_redirects=True,
-    )
-    assert signup.status_code == 200
-
-    admin_user = await _promote_signed_in_user_to_admin(
-        db_session, email="inactive-admin@example.com"
-    )
-    admin_user.is_active = False
-    await db_session.commit()
-
-    admin_page = await client.get("/admin/users", follow_redirects=False)
-    assert admin_page.status_code == 401
