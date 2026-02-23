@@ -45,8 +45,8 @@
             "standardFlowEnabled": true,
             "directAccessGrantsEnabled": false,
             "redirectUris": [
-                "http://127.0.0.1:8000/auth/google/callback",
-                "http://localhost:8000/auth/google/callback"
+                "http://127.0.0.1:8000/auth/oidc/callback",
+                "http://localhost:8000/auth/oidc/callback"
             ],
             "webOrigins": [
                 "http://127.0.0.1:8000",

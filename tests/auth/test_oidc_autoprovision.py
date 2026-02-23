@@ -12,7 +12,7 @@ from agendable.web.routes import auth as auth_routes
 
 
 @dataclass
-class _FakeGoogleClient:
+class _FakeOidcClient:
     userinfo_payload: dict[str, object]
 
     async def authorize_access_token(self, request: object) -> dict[str, str]:
@@ -31,12 +31,15 @@ async def test_oidc_callback_autoprovisions_user_and_links_identity(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENDABLE_GOOGLE_CLIENT_ID", "test-client")
-    monkeypatch.setenv("AGENDABLE_GOOGLE_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv(
+        "AGENDABLE_OIDC_METADATA_URL", "https://example.com/.well-known/openid-configuration"
+    )
     monkeypatch.setattr(
         auth_routes,
-        "_google_oauth_client",
-        lambda: _FakeGoogleClient(
+        "_oidc_oauth_client",
+        lambda: _FakeOidcClient(
             {
                 "sub": "sub-123",
                 "email": "alice@example.com",
@@ -47,7 +50,7 @@ async def test_oidc_callback_autoprovisions_user_and_links_identity(
         ),
     )
 
-    response = await client.get("/auth/google/callback", follow_redirects=False)
+    response = await client.get("/auth/oidc/callback", follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/dashboard"
 
@@ -61,7 +64,7 @@ async def test_oidc_callback_autoprovisions_user_and_links_identity(
     identity = (
         await db_session.execute(
             select(ExternalIdentity).where(
-                ExternalIdentity.provider == "google",
+                ExternalIdentity.provider == "oidc",
                 ExternalIdentity.subject == "sub-123",
             )
         )
@@ -75,8 +78,11 @@ async def test_oidc_callback_links_existing_user_without_creating_duplicate(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENDABLE_GOOGLE_CLIENT_ID", "test-client")
-    monkeypatch.setenv("AGENDABLE_GOOGLE_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv(
+        "AGENDABLE_OIDC_METADATA_URL", "https://example.com/.well-known/openid-configuration"
+    )
 
     signup = await client.post(
         "/signup",
@@ -94,8 +100,8 @@ async def test_oidc_callback_links_existing_user_without_creating_duplicate(
 
     monkeypatch.setattr(
         auth_routes,
-        "_google_oauth_client",
-        lambda: _FakeGoogleClient(
+        "_oidc_oauth_client",
+        lambda: _FakeOidcClient(
             {
                 "sub": "sub-bob",
                 "email": "bob@example.com",
@@ -106,7 +112,7 @@ async def test_oidc_callback_links_existing_user_without_creating_duplicate(
         ),
     )
 
-    response = await client.get("/auth/google/callback", follow_redirects=False)
+    response = await client.get("/auth/oidc/callback", follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/dashboard"
 
@@ -116,7 +122,7 @@ async def test_oidc_callback_links_existing_user_without_creating_duplicate(
     identity = (
         await db_session.execute(
             select(ExternalIdentity).where(
-                ExternalIdentity.provider == "google",
+                ExternalIdentity.provider == "oidc",
                 ExternalIdentity.subject == "sub-bob",
             )
         )
@@ -133,12 +139,15 @@ async def test_oidc_autoprovision_name_fallback_uses_email_localpart(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENDABLE_GOOGLE_CLIENT_ID", "test-client")
-    monkeypatch.setenv("AGENDABLE_GOOGLE_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv(
+        "AGENDABLE_OIDC_METADATA_URL", "https://example.com/.well-known/openid-configuration"
+    )
     monkeypatch.setattr(
         auth_routes,
-        "_google_oauth_client",
-        lambda: _FakeGoogleClient(
+        "_oidc_oauth_client",
+        lambda: _FakeOidcClient(
             {
                 "sub": "sub-charlie",
                 "email": "charlie@example.com",
@@ -147,7 +156,7 @@ async def test_oidc_autoprovision_name_fallback_uses_email_localpart(
         ),
     )
 
-    response = await client.get("/auth/google/callback", follow_redirects=False)
+    response = await client.get("/auth/oidc/callback", follow_redirects=False)
     assert response.status_code == 303
 
     user = (

@@ -107,23 +107,18 @@ For production, override the session secret:
 The app includes an `external_identities` table to map external identity provider subjects (OIDC `sub`, SAML NameID, etc.) to internal users.
 This lets us add OAuth/OIDC and/or SAML later without changing the rest of the data model.
 
-#### Google OIDC (optional)
+#### OIDC setup (optional)
 
-Setup (Google Cloud Console):
+Configure any OIDC provider (Google, Okta, Auth0, Keycloak, etc.) with callback URI:
 
-- Create/select a Google Cloud project
-- Configure OAuth consent screen (Internal for Workspace-only, External for Gmail/public testing)
-- Create credentials: OAuth client ID → **Web application**
-- Add an authorized redirect URI that matches how you access the app locally:
-	- `http://127.0.0.1:8000/auth/google/callback`
-	- (optional) `http://localhost:8000/auth/google/callback`
+- `http://127.0.0.1:8000/auth/oidc/callback`
+- (optional) `http://localhost:8000/auth/oidc/callback`
 
-Note: `localhost` and `127.0.0.1` are treated as different origins by Google OAuth; add whichever you use.
+To enable SSO, set:
 
-To enable "Sign in with Google", set:
-
-- `AGENDABLE_GOOGLE_CLIENT_ID='...'`
-- `AGENDABLE_GOOGLE_CLIENT_SECRET='...'`
+- `AGENDABLE_OIDC_CLIENT_ID='...'`
+- `AGENDABLE_OIDC_CLIENT_SECRET='...'`
+- `AGENDABLE_OIDC_METADATA_URL='https://<your-provider>/.well-known/openid-configuration'`
 
 Optional restriction:
 
@@ -131,13 +126,7 @@ Optional restriction:
 
 #### Managed OIDC testing (Auth0 / Okta / any OIDC provider)
 
-You can test against non-Google providers without code changes by overriding metadata URL.
-
-Set:
-
-- `AGENDABLE_GOOGLE_CLIENT_ID='...'`
-- `AGENDABLE_GOOGLE_CLIENT_SECRET='...'`
-- `AGENDABLE_GOOGLE_METADATA_URL='https://<your-provider>/.well-known/openid-configuration'`
+Use the same OIDC vars above for any managed provider.
 
 Optional callback diagnostics:
 
@@ -148,12 +137,11 @@ Set it back to `false` (or unset it) after troubleshooting to reduce log noise.
 
 Keep callback URI configured in your provider app/client as:
 
-- `http://127.0.0.1:8000/auth/google/callback`
+- `http://127.0.0.1:8000/auth/oidc/callback`
 
 Notes:
 
-- The app route path stays `/auth/google/*` for now, even when testing non-Google providers.
-- This is fine for development/staging SSO validation.
+- The app route path is `/auth/oidc/*`.
 
 #### Local OIDC testing with Keycloak (multiple test users)
 
@@ -180,9 +168,9 @@ Imported realm seed:
 
 Then set app env vars (for local `.env` or compose override):
 
-- `AGENDABLE_GOOGLE_CLIENT_ID='agendable-local'`
-- `AGENDABLE_GOOGLE_CLIENT_SECRET='agendable-local-secret'`
-- `AGENDABLE_GOOGLE_METADATA_URL='http://keycloak:8080/realms/agendable/.well-known/openid-configuration'` (inside Docker)
+- `AGENDABLE_OIDC_CLIENT_ID='agendable-local'`
+- `AGENDABLE_OIDC_CLIENT_SECRET='agendable-local-secret'`
+- `AGENDABLE_OIDC_METADATA_URL='http://keycloak:8080/realms/agendable/.well-known/openid-configuration'` (inside Docker)
 
 The compose file uses a browser-facing hostname (`127.0.0.1:8081`) plus Keycloak backchannel-dynamic URLs so app-to-Keycloak token exchange from the `web` container works.
 
@@ -192,7 +180,7 @@ If you change Keycloak hostname/env settings, recreate containers:
 
 If running app outside Docker, use host URL instead:
 
-- `AGENDABLE_GOOGLE_METADATA_URL='http://127.0.0.1:8081/realms/agendable/.well-known/openid-configuration'`
+- `AGENDABLE_OIDC_METADATA_URL='http://127.0.0.1:8081/realms/agendable/.well-known/openid-configuration'`
 
 This gives you quick multi-user SSO validation without pilot users.
 
