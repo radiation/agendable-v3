@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Mapping
 from typing import Any, cast
@@ -19,6 +20,7 @@ from agendable.sso_google import google_enabled
 from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 
 def _is_bootstrap_admin_email(email: str) -> bool:
@@ -115,6 +117,55 @@ def _google_oauth_client() -> Any:
 
 def _as_userinfo_mapping(value: object) -> Mapping[str, object]:
     return cast(Mapping[str, object], value)
+
+
+def _claim_is_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes", "on"}
+    if isinstance(value, int):
+        return value != 0
+    return False
+
+
+def _userinfo_name_parts(userinfo: Mapping[str, object], email: str) -> tuple[str, str]:
+    first_name = str(userinfo.get("given_name", "")).strip()
+    last_name = str(userinfo.get("family_name", "")).strip()
+
+    if not first_name and not last_name:
+        full_name = str(userinfo.get("name", "")).strip()
+        if full_name:
+            parts = full_name.split(maxsplit=1)
+            first_name = parts[0]
+            if len(parts) > 1:
+                last_name = parts[1]
+
+    if not first_name:
+        first_name = email.split("@", 1)[0] or "User"
+
+    return first_name, last_name
+
+
+async def _provision_user_for_oidc(
+    session: AsyncSession,
+    *,
+    email: str,
+    userinfo: Mapping[str, object],
+) -> User:
+    first_name, last_name = _userinfo_name_parts(userinfo, email)
+    user = User(
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        display_name=f"{first_name} {last_name}".strip(),
+        timezone="UTC",
+        role=(UserRole.admin if _is_bootstrap_admin_email(email) else UserRole.user),
+        password_hash=None,
+    )
+    session.add(user)
+    await session.flush()
+    return user
 
 
 @router.get("/login", response_class=Response)
@@ -221,10 +272,15 @@ async def signup(
 
 @router.get("/auth/google/start", response_class=RedirectResponse)
 async def google_start(request: Request) -> Response:
+    settings = get_settings()
     if not google_enabled():
+        if settings.oidc_debug_logging:
+            logger.info("OIDC start aborted: provider is disabled")
         raise HTTPException(status_code=404)
 
     redirect_uri = str(request.url_for("google_callback"))
+    if settings.oidc_debug_logging:
+        logger.info("OIDC start redirect initiated: redirect_uri=%s", redirect_uri)
     google_client = _google_oauth_client()
     return cast(Response, await google_client.authorize_redirect(request, redirect_uri))
 
@@ -234,28 +290,80 @@ async def google_callback(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> Response:
+    settings = get_settings()
+    debug_oidc = settings.oidc_debug_logging
+
     if not google_enabled():
+        if debug_oidc:
+            logger.info("OIDC callback aborted: provider is disabled")
         raise HTTPException(status_code=404)
 
     google_client = _google_oauth_client()
 
     try:
         token = await google_client.authorize_access_token(request)
-        userinfo = _as_userinfo_mapping(await google_client.parse_id_token(request, token))
     except OAuthError:
+        if debug_oidc:
+            logger.info("OIDC callback OAuthError during token/id token exchange")
         return RedirectResponse(url="/login", status_code=303)
+
+    token_keys: list[str] = [str(key) for key in token]
+    if debug_oidc:
+        logger.info("OIDC callback token keys=%s", sorted(token_keys))
+
+    parsed_userinfo: Mapping[str, object] | None = None
+    if "id_token" in token:
+        try:
+            parsed_userinfo = _as_userinfo_mapping(
+                await google_client.parse_id_token(request, token)
+            )
+        except TypeError:
+            parsed_userinfo = _as_userinfo_mapping(
+                await google_client.parse_id_token(token, nonce=None)
+            )
+        except Exception:
+            if debug_oidc:
+                logger.info(
+                    "OIDC callback parse_id_token failed; falling back to userinfo endpoint"
+                )
+
+    if parsed_userinfo is None:
+        parsed_userinfo = _as_userinfo_mapping(await google_client.userinfo(token=token))
+
+    userinfo = parsed_userinfo
 
     sub = str(userinfo.get("sub", ""))
     email = str(userinfo.get("email", "")).strip().lower()
-    email_verified = bool(userinfo.get("email_verified"))
+    email_verified = _claim_is_truthy(userinfo.get("email_verified"))
+
+    if debug_oidc:
+        logger.info(
+            "OIDC callback claims parsed: sub_present=%s email=%s email_verified=%s claim_keys=%s",
+            bool(sub),
+            email,
+            email_verified,
+            sorted(userinfo.keys()),
+        )
 
     if not sub or not email or not email_verified:
+        if debug_oidc:
+            logger.info(
+                "OIDC callback rejected claims: sub_present=%s email_present=%s email_verified=%s",
+                bool(sub),
+                bool(email),
+                email_verified,
+            )
         return RedirectResponse(url="/login", status_code=303)
 
-    settings = get_settings()
     if settings.allowed_email_domain is not None:
         allowed = settings.allowed_email_domain.strip().lower().lstrip("@")
         if not email.endswith(f"@{allowed}"):
+            if debug_oidc:
+                logger.info(
+                    "OIDC callback denied by allowed_email_domain: email=%s allowed_domain=%s",
+                    email,
+                    allowed,
+                )
             return _render_login_template(
                 request,
                 error="Email domain not allowed",
@@ -266,23 +374,32 @@ async def google_callback(
     ext = await ext_repo.get_by_provider_subject("google", sub)
 
     if ext is not None:
+        if debug_oidc:
+            logger.info("OIDC callback found external identity for subject: %s", sub)
         users = UserRepository(session)
         user = await users.get_by_id(ext.user_id)
         if user is None:
+            if debug_oidc:
+                logger.info("OIDC callback identity points to missing user id=%s", ext.user_id)
             return RedirectResponse(url="/login", status_code=303)
     else:
+        if debug_oidc:
+            logger.info("OIDC callback no external identity for subject: %s", sub)
         users = UserRepository(session)
         user = await users.get_by_email(email)
         if user is None:
-            return _render_login_template(
-                request,
-                error="Account not found. Create one first.",
-                status_code=403,
-            )
+            if debug_oidc:
+                logger.info("OIDC callback auto-provisioning new user for email=%s", email)
+            user = await _provision_user_for_oidc(session, email=email, userinfo=userinfo)
+        elif debug_oidc:
+            logger.info("OIDC callback linking existing user for email=%s", email)
 
         ext = ExternalIdentity(user_id=user.id, provider="google", subject=sub, email=email)
         session.add(ext)
         await session.commit()
+
+    if debug_oidc:
+        logger.info("OIDC callback success user_id=%s email=%s", user.id, user.email)
 
     await _maybe_promote_bootstrap_admin(user, session)
 

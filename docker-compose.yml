@@ -21,6 +21,21 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: [ "sso" ]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://127.0.0.1:8081
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HOSTNAME_STRICT: "false"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./dev/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    command: [ "start-dev", "--import-realm" ]
+
   web:
     build:
       context: .
