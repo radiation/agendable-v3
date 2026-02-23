@@ -289,7 +289,15 @@ async def oidc_start(request: Request) -> Response:
     if settings.oidc_debug_logging:
         logger.info("OIDC start redirect initiated: redirect_uri=%s", redirect_uri)
     oidc_client = _oidc_oauth_client()
-    return cast(Response, await oidc_client.authorize_redirect(request, redirect_uri))
+    prompt = (settings.oidc_auth_prompt or "").strip()
+    authorize_params: dict[str, str] = {}
+    if prompt:
+        authorize_params["prompt"] = prompt
+
+    return cast(
+        Response,
+        await oidc_client.authorize_redirect(request, redirect_uri, **authorize_params),
+    )
 
 
 @router.get("/auth/oidc/callback", name="oidc_callback")

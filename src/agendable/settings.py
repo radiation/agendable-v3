@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     oidc_client_secret: SecretStr | None = None
     oidc_metadata_url: str | None = None
     oidc_debug_logging: bool = False
+    # OIDC authorize "prompt" value (e.g. "select_account", "login").
+    # Set to empty string to omit prompt from authorize requests.
+    oidc_auth_prompt: str | None = "select_account"
     # If set, only allow users with emails in this domain (e.g. "example.com").
     allowed_email_domain: str | None = None
 

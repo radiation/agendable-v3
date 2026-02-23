@@ -120,6 +120,13 @@ To enable SSO, set:
 - `AGENDABLE_OIDC_CLIENT_SECRET='...'`
 - `AGENDABLE_OIDC_METADATA_URL='https://<your-provider>/.well-known/openid-configuration'`
 
+Optional login-prompt behavior:
+
+- `AGENDABLE_OIDC_AUTH_PROMPT='select_account'` (default)
+	- Helps prevent immediate silent re-login after app logout by asking the IdP for account selection.
+	- Set to `login` to force re-authentication each time.
+	- Set to empty (`''`) to omit `prompt` entirely.
+
 Optional restriction:
 
 - `AGENDABLE_ALLOWED_EMAIL_DOMAIN='example.com'` (only allows `@example.com` users)
