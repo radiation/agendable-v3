@@ -35,10 +35,10 @@ class Settings(BaseSettings):
     default_email_reminder_minutes_before: int = 60
     reminder_worker_poll_seconds: int = 60
 
-    # Google OIDC (optional)
-    google_client_id: str | None = None
-    google_client_secret: SecretStr | None = None
-    google_metadata_url: str = "https://accounts.google.com/.well-known/openid-configuration"
+    # OIDC (optional)
+    oidc_client_id: str | None = None
+    oidc_client_secret: SecretStr | None = None
+    oidc_metadata_url: str | None = None
     oidc_debug_logging: bool = False
     # If set, only allow users with emails in this domain (e.g. "example.com").
     allowed_email_domain: str | None = None

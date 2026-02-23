@@ -25,9 +25,9 @@
 
 <p style="margin-top: .75rem;"><small>Need an account? <a href="/signup">Create one</a>.</small></p>
 
-{% if google_enabled %}
+{% if oidc_enabled %}
 <p style="margin-top: 1rem;">
-    <a href="/auth/google/start">Sign in with Google</a>
+    <a href="/auth/oidc/start">Sign in with SSO</a>
 </p>
 {% endif %}
 {% endblock %}

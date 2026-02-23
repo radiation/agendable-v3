@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from fastapi.templating import Jinja2Templates
 
 from agendable.recurrence import describe_recurrence
-from agendable.sso_google import build_oauth
+from agendable.sso_oidc import build_oauth
 
 _COMMON_TIMEZONES: tuple[tuple[str, str], ...] = (
     ("UTC", "UTC"),

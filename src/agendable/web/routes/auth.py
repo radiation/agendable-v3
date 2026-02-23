@@ -16,7 +16,7 @@ from agendable.db import get_session
 from agendable.db.models import ExternalIdentity, User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.settings import get_settings
-from agendable.sso_google import google_enabled
+from agendable.sso_oidc import oidc_enabled
 from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
@@ -52,7 +52,7 @@ def _render_login_template(
         {
             "error": error,
             "current_user": None,
-            "google_enabled": google_enabled(),
+            "oidc_enabled": oidc_enabled(),
         },
         status_code=status_code,
     )
@@ -111,8 +111,8 @@ async def _get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
     return user
 
 
-def _google_oauth_client() -> Any:
-    return cast(Any, oauth).google
+def _oidc_oauth_client() -> Any:
+    return cast(Any, oauth).oidc
 
 
 def _as_userinfo_mapping(value: object) -> Mapping[str, object]:
@@ -270,38 +270,38 @@ async def signup(
     return RedirectResponse(url="/dashboard", status_code=303)
 
 
-@router.get("/auth/google/start", response_class=RedirectResponse)
-async def google_start(request: Request) -> Response:
+@router.get("/auth/oidc/start", response_class=RedirectResponse)
+async def oidc_start(request: Request) -> Response:
     settings = get_settings()
-    if not google_enabled():
+    if not oidc_enabled():
         if settings.oidc_debug_logging:
             logger.info("OIDC start aborted: provider is disabled")
         raise HTTPException(status_code=404)
 
-    redirect_uri = str(request.url_for("google_callback"))
+    redirect_uri = str(request.url_for("oidc_callback"))
     if settings.oidc_debug_logging:
         logger.info("OIDC start redirect initiated: redirect_uri=%s", redirect_uri)
-    google_client = _google_oauth_client()
-    return cast(Response, await google_client.authorize_redirect(request, redirect_uri))
+    oidc_client = _oidc_oauth_client()
+    return cast(Response, await oidc_client.authorize_redirect(request, redirect_uri))
 
 
-@router.get("/auth/google/callback", name="google_callback")
-async def google_callback(
+@router.get("/auth/oidc/callback", name="oidc_callback")
+async def oidc_callback(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     settings = get_settings()
     debug_oidc = settings.oidc_debug_logging
 
-    if not google_enabled():
+    if not oidc_enabled():
         if debug_oidc:
             logger.info("OIDC callback aborted: provider is disabled")
         raise HTTPException(status_code=404)
 
-    google_client = _google_oauth_client()
+    oidc_client = _oidc_oauth_client()
 
     try:
-        token = await google_client.authorize_access_token(request)
+        token = await oidc_client.authorize_access_token(request)
     except OAuthError:
         if debug_oidc:
             logger.info("OIDC callback OAuthError during token/id token exchange")
@@ -314,12 +314,10 @@ async def google_callback(
     parsed_userinfo: Mapping[str, object] | None = None
     if "id_token" in token:
         try:
-            parsed_userinfo = _as_userinfo_mapping(
-                await google_client.parse_id_token(request, token)
-            )
+            parsed_userinfo = _as_userinfo_mapping(await oidc_client.parse_id_token(request, token))
         except TypeError:
             parsed_userinfo = _as_userinfo_mapping(
-                await google_client.parse_id_token(token, nonce=None)
+                await oidc_client.parse_id_token(token, nonce=None)
             )
         except Exception:
             if debug_oidc:
@@ -328,7 +326,7 @@ async def google_callback(
                 )
 
     if parsed_userinfo is None:
-        parsed_userinfo = _as_userinfo_mapping(await google_client.userinfo(token=token))
+        parsed_userinfo = _as_userinfo_mapping(await oidc_client.userinfo(token=token))
 
     userinfo = parsed_userinfo
 
@@ -371,7 +369,7 @@ async def google_callback(
             )
 
     ext_repo = ExternalIdentityRepository(session)
-    ext = await ext_repo.get_by_provider_subject("google", sub)
+    ext = await ext_repo.get_by_provider_subject("oidc", sub)
 
     if ext is not None:
         if debug_oidc:
@@ -394,7 +392,7 @@ async def google_callback(
         elif debug_oidc:
             logger.info("OIDC callback linking existing user for email=%s", email)
 
-        ext = ExternalIdentity(user_id=user.id, provider="google", subject=sub, email=email)
+        ext = ExternalIdentity(user_id=user.id, provider="oidc", subject=sub, email=email)
         session.add(ext)
         await session.commit()
 
