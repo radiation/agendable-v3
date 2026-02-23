@@ -7,16 +7,54 @@
 
 <section>
     <h2>Users</h2>
-    <ul>
-        {% for user in users %}
-        <li>
-            {{ user.full_name }}
-            <small>({{ user.email }})</small>
-            <small>— {{ user.role.value }}</small>
-        </li>
-        {% else %}
-        <li><em>No users found.</em></li>
-        {% endfor %}
-    </ul>
+    {% if error %}
+    <p><strong>{{ error }}</strong></p>
+    {% endif %}
+
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in users %}
+            <tr>
+                <td>{{ user.full_name }}</td>
+                <td><small>{{ user.email }}</small></td>
+                <td>{{ user.role.value }}</td>
+                <td>{% if user.is_active %}active{% else %}inactive{% endif %}</td>
+                <td>
+                    <form method="post" action="/admin/users/{{ user.id }}/role" style="display:inline;">
+                        <select name="role">
+                            <option value="user" {% if user.role.value=="user" %}selected{% endif %}>user</option>
+                            <option value="admin" {% if user.role.value=="admin" %}selected{% endif %}>admin</option>
+                        </select>
+                        <button type="submit">Save role</button>
+                    </form>
+
+                    <form method="post" action="/admin/users/{{ user.id }}/active"
+                        style="display:inline; margin-left: .5rem;">
+                        {% if user.is_active %}
+                        <input type="hidden" name="is_active" value="false" />
+                        <button type="submit">Deactivate</button>
+                        {% else %}
+                        <input type="hidden" name="is_active" value="true" />
+                        <button type="submit">Activate</button>
+                        {% endif %}
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5"><em>No users found.</em></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </section>
 {% endblock %}

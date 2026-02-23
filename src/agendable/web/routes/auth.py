@@ -196,6 +196,13 @@ async def login(
             status_code=401,
         )
 
+    if not user.is_active:
+        return _render_login_template(
+            request,
+            error="This account is deactivated. Contact an admin.",
+            status_code=403,
+        )
+
     if user.password_hash is None or not verify_password(password, user.password_hash):
         return _render_login_template(
             request,
@@ -380,6 +387,14 @@ async def oidc_callback(
             if debug_oidc:
                 logger.info("OIDC callback identity points to missing user id=%s", ext.user_id)
             return RedirectResponse(url="/login", status_code=303)
+        if not user.is_active:
+            if debug_oidc:
+                logger.info("OIDC callback denied inactive user for external identity: %s", user.id)
+            return _render_login_template(
+                request,
+                error="This account is deactivated. Contact an admin.",
+                status_code=403,
+            )
     else:
         if debug_oidc:
             logger.info("OIDC callback no external identity for subject: %s", sub)
@@ -389,6 +404,14 @@ async def oidc_callback(
             if debug_oidc:
                 logger.info("OIDC callback auto-provisioning new user for email=%s", email)
             user = await _provision_user_for_oidc(session, email=email, userinfo=userinfo)
+        elif not user.is_active:
+            if debug_oidc:
+                logger.info("OIDC callback denied inactive email match for email=%s", email)
+            return _render_login_template(
+                request,
+                error="This account is deactivated. Contact an admin.",
+                status_code=403,
+            )
         elif user.password_hash is not None:
             if debug_oidc:
                 logger.info(

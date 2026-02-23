@@ -43,6 +43,7 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.user)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     prefers_dark_mode: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(
