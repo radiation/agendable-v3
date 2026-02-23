@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,3 +21,21 @@ class ExternalIdentityRepository(BaseRepository[ExternalIdentity]):
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_by_user_id(self, user_id: uuid.UUID) -> list[ExternalIdentity]:
+        result = await self.session.execute(
+            select(ExternalIdentity)
+            .where(ExternalIdentity.user_id == user_id)
+            .order_by(ExternalIdentity.provider.asc(), ExternalIdentity.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_by_user_ids(self, user_ids: list[uuid.UUID]) -> list[ExternalIdentity]:
+        if not user_ids:
+            return []
+        result = await self.session.execute(
+            select(ExternalIdentity)
+            .where(ExternalIdentity.user_id.in_(user_ids))
+            .order_by(ExternalIdentity.user_id.asc(), ExternalIdentity.provider.asc())
+        )
+        return list(result.scalars().all())
