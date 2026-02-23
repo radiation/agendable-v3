@@ -1,8 +1,5 @@
 version: 2
 
-matches-ignore:
-  - name: Keycloak test fixture password
-    match: Password123!
-    paths:
-      - dev/keycloak/realm-export.json
-      - tests/auth/test_oidc_autoprovision.py
+paths-ignore:
+  - dev/keycloak/realm-export.json
+  - tests/auth/test_oidc_autoprovision.py

@@ -389,8 +389,19 @@ async def oidc_callback(
             if debug_oidc:
                 logger.info("OIDC callback auto-provisioning new user for email=%s", email)
             user = await _provision_user_for_oidc(session, email=email, userinfo=userinfo)
+        elif user.password_hash is not None:
+            if debug_oidc:
+                logger.info(
+                    "OIDC callback denied linking password-based account for email=%s",
+                    email,
+                )
+            return _render_login_template(
+                request,
+                error="An account with this email already exists. Sign in with password first to link SSO.",
+                status_code=403,
+            )
         elif debug_oidc:
-            logger.info("OIDC callback linking existing user for email=%s", email)
+            logger.info("OIDC callback linking existing SSO account for email=%s", email)
 
         ext = ExternalIdentity(user_id=user.id, provider="oidc", subject=sub, email=email)
         session.add(ext)
