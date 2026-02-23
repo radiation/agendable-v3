@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -27,7 +26,11 @@ from agendable.db.repos import (
     UserRepository,
 )
 from agendable.recurrence import describe_recurrence
-from agendable.web.routes.common import parse_dt, templates
+from agendable.web.routes.common import (
+    format_datetime_local_value,
+    parse_dt_for_timezone,
+    templates,
+)
 
 router = APIRouter()
 
@@ -83,12 +86,7 @@ async def occurrence_detail(
     task_due_default = (
         next_occurrence.scheduled_at if next_occurrence is not None else occurrence.scheduled_at
     )
-    task_due_default_utc = (
-        task_due_default.replace(tzinfo=UTC)
-        if task_due_default.tzinfo is None
-        else task_due_default.astimezone(UTC)
-    )
-    task_due_default_value = task_due_default_utc.strftime("%Y-%m-%dT%H:%M")
+    task_due_default_value = format_datetime_local_value(task_due_default, current_user.timezone)
 
     tasks_repo = TaskRepository(session)
     tasks = await tasks_repo.list_for_occurrence(occurrence.id)
@@ -159,7 +157,7 @@ async def create_task(
         next_occurrence.scheduled_at if next_occurrence is not None else occurrence.scheduled_at
     )
     final_due_at = (
-        parse_dt(due_at_input)
+        parse_dt_for_timezone(due_at_input, current_user.timezone)
         if due_at_input is not None and due_at_input.strip()
         else default_due_at
     )

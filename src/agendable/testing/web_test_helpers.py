@@ -14,13 +14,14 @@ async def login_user(
     *,
     first_name: str = "Test",
     last_name: str = "User",
+    timezone: str = "UTC",
 ) -> None:
     resp = await client.post(
         "/signup",
         data={
             "first_name": first_name,
             "last_name": last_name,
-            "timezone": "UTC",
+            "timezone": timezone,
             "email": email,
             "password": password,
         },

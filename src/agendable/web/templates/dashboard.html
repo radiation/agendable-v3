@@ -15,7 +15,7 @@
         {% for meeting in upcoming_meetings %}
         <li>
             <a href="/occurrences/{{ meeting.id }}">{{ meeting.series.title }}</a>
-            <small>— {{ meeting.scheduled_at }}</small>
+            <small>— {{ meeting.scheduled_at|format_dt(current_user.timezone) }}</small>
         </li>
         {% else %}
         <li><em>No upcoming meetings.</em></li>
@@ -30,7 +30,7 @@
     <ul>
         {% for task in outstanding_tasks %}
         <li>
-            {{ task.due_at }} -
+            {{ task.due_at|format_dt(current_user.timezone) }} -
             <a href="/occurrences/{{ task.occurrence_id }}">{{ task.title }}</a>
         </li>
         {% else %}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -70,6 +70,24 @@ def parse_dt(value: str) -> datetime:
     return dt
 
 
+def parse_dt_for_timezone(value: str, timezone_name: str | None) -> datetime:
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid datetime") from exc
+
+    if dt.tzinfo is not None:
+        return dt.astimezone(UTC)
+
+    tz_name = (timezone_name or "UTC").strip() or "UTC"
+    try:
+        local_zone: tzinfo = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        local_zone = UTC
+
+    return dt.replace(tzinfo=local_zone).astimezone(UTC)
+
+
 def parse_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
@@ -94,8 +112,38 @@ def parse_timezone(value: str) -> ZoneInfo:
         raise HTTPException(status_code=400, detail="Unknown timezone") from exc
 
 
+def format_datetime_for_timezone(value: object, timezone_name: str | None = None) -> str:
+    if not isinstance(value, datetime):
+        return ""
+
+    dt_utc = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+    tz_name = (timezone_name or "UTC").strip() or "UTC"
+    target_zone: tzinfo
+    try:
+        target_zone = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        target_zone = UTC
+
+    return dt_utc.astimezone(target_zone).strftime("%Y-%m-%d %I:%M %p %Z")
+
+
+def format_datetime_local_value(value: datetime, timezone_name: str | None) -> str:
+    dt_utc = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+    tz_name = (timezone_name or "UTC").strip() or "UTC"
+    target_zone: tzinfo
+    try:
+        target_zone = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        target_zone = UTC
+
+    return dt_utc.astimezone(target_zone).strftime("%Y-%m-%dT%H:%M")
+
+
 templates_dir = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
 templates.env.globals["timezone_options"] = _build_timezone_options()
+templates.env.filters["format_dt"] = format_datetime_for_timezone
 
 oauth = build_oauth()
