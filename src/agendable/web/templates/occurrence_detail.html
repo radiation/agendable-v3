@@ -8,7 +8,7 @@
 <section>
     <h2>{{ series.title }}</h2>
     <p><small>Repeats: {{ recurrence_label }}</small></p>
-    <p><strong>Scheduled:</strong> {{ occurrence.scheduled_at }}</p>
+    <p><strong>Scheduled:</strong> {{ occurrence.scheduled_at|format_dt(current_user.timezone) }}</p>
     {% if occurrence.is_completed %}
     <p><strong>Status:</strong> Completed</p>
     {% else %}
@@ -65,7 +65,7 @@
             </select>
         </label>
         <label>
-            Due at (UTC)
+            Due at (local time)
             <input name="due_at" type="datetime-local" value="{{ task_due_default_value }}" required />
         </label>
         <button type="submit">Add task</button>
@@ -84,7 +84,7 @@
             {% endif %}
             {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
             <small>— {{ t.assignee.full_name }}</small>
-            <small>— due {{ t.due_at }}</small>
+            <small>— due {{ t.due_at|format_dt(current_user.timezone) }}</small>
         </li>
         {% else %}
         <li><em>No tasks yet.</em></li>

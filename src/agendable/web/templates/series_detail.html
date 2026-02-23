@@ -28,7 +28,7 @@
     <ul>
         {% for o in occurrences %}
         <li>
-            <a href="/occurrences/{{ o.id }}">{{ o.scheduled_at }}</a>
+            <a href="/occurrences/{{ o.id }}">{{ o.scheduled_at|format_dt(current_user.timezone) }}</a>
             {% if active_occurrence and o.id == active_occurrence.id %}
             <strong>(active)</strong>
             {% endif %}
