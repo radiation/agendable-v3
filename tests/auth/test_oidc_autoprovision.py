@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.db.models import ExternalIdentity, User
+from agendable.db.models import ExternalIdentity, User, UserRole
 from agendable.web.routes import auth as auth_routes
 
 
@@ -73,7 +73,7 @@ async def test_oidc_callback_autoprovisions_user_and_links_identity(
 
 
 @pytest.mark.asyncio
-async def test_oidc_callback_links_existing_user_without_creating_duplicate(
+async def test_oidc_callback_rejects_link_to_existing_password_account(
     client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -113,8 +113,8 @@ async def test_oidc_callback_links_existing_user_without_creating_duplicate(
     )
 
     response = await client.get("/auth/oidc/callback", follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == "/dashboard"
+    assert response.status_code == 403
+    assert "Sign in with password first to link SSO" in response.text
 
     user_count = (await db_session.execute(select(func.count(User.id)))).scalar_one()
     assert user_count == 1
@@ -126,11 +126,71 @@ async def test_oidc_callback_links_existing_user_without_creating_duplicate(
                 ExternalIdentity.subject == "sub-bob",
             )
         )
-    ).scalar_one()
+    ).scalar_one_or_none()
     bob = (
         await db_session.execute(select(User).where(User.email == "bob@example.com"))
     ).scalar_one()
-    assert identity.user_id == bob.id
+    assert identity is None
+    assert bob.password_hash is not None
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_links_existing_passwordless_account(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv(
+        "AGENDABLE_OIDC_METADATA_URL", "https://example.com/.well-known/openid-configuration"
+    )
+
+    existing_user = User(
+        email="dana@example.com",
+        first_name="Dana",
+        last_name="Example",
+        display_name="Dana Example",
+        timezone="UTC",
+        role=UserRole.user,
+        password_hash=None,
+    )
+    db_session.add(existing_user)
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        auth_routes,
+        "_oidc_oauth_client",
+        lambda: _FakeOidcClient(
+            {
+                "sub": "sub-dana",
+                "email": "dana@example.com",
+                "email_verified": True,
+                "given_name": "Dana",
+                "family_name": "Example",
+            }
+        ),
+    )
+
+    response = await client.get("/auth/oidc/callback", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/dashboard"
+
+    user_count = (await db_session.execute(select(func.count(User.id)))).scalar_one()
+    assert user_count == 1
+
+    identity = (
+        await db_session.execute(
+            select(ExternalIdentity).where(
+                ExternalIdentity.provider == "oidc",
+                ExternalIdentity.subject == "sub-dana",
+            )
+        )
+    ).scalar_one()
+    dana = (
+        await db_session.execute(select(User).where(User.email == "dana@example.com"))
+    ).scalar_one()
+    assert identity.user_id == dana.id
 
 
 @pytest.mark.asyncio
