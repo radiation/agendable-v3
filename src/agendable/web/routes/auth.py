@@ -17,11 +17,20 @@ from agendable.db.models import ExternalIdentity, User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.settings import get_settings
 from agendable.sso_oidc import oidc_enabled
+from agendable.sso_oidc_flow import (
+    OidcIdentityClaims,
+    build_authorize_params,
+    clear_oidc_link_user_id,
+    get_oidc_link_user_id,
+    parse_identity_claims,
+    parse_userinfo_from_token,
+    set_oidc_link_user_id,
+    userinfo_name_parts,
+)
 from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
-_OIDC_LINK_USER_ID_SESSION_KEY = "oidc_link_user_id"
 
 
 def _is_bootstrap_admin_email(email: str) -> bool:
@@ -112,58 +121,8 @@ async def _get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
     return user
 
 
-def _get_oidc_link_user_id(request: Request) -> uuid.UUID | None:
-    raw = request.session.get(_OIDC_LINK_USER_ID_SESSION_KEY)
-    if raw is None:
-        return None
-    try:
-        return uuid.UUID(str(raw))
-    except ValueError:
-        return None
-
-
-def _set_oidc_link_user_id(request: Request, user_id: uuid.UUID) -> None:
-    request.session[_OIDC_LINK_USER_ID_SESSION_KEY] = str(user_id)
-
-
-def _clear_oidc_link_user_id(request: Request) -> None:
-    request.session.pop(_OIDC_LINK_USER_ID_SESSION_KEY, None)
-
-
 def _oidc_oauth_client() -> Any:
     return cast(Any, oauth).oidc
-
-
-def _as_userinfo_mapping(value: object) -> Mapping[str, object]:
-    return cast(Mapping[str, object], value)
-
-
-def _claim_is_truthy(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"true", "1", "yes", "on"}
-    if isinstance(value, int):
-        return value != 0
-    return False
-
-
-def _userinfo_name_parts(userinfo: Mapping[str, object], email: str) -> tuple[str, str]:
-    first_name = str(userinfo.get("given_name", "")).strip()
-    last_name = str(userinfo.get("family_name", "")).strip()
-
-    if not first_name and not last_name:
-        full_name = str(userinfo.get("name", "")).strip()
-        if full_name:
-            parts = full_name.split(maxsplit=1)
-            first_name = parts[0]
-            if len(parts) > 1:
-                last_name = parts[1]
-
-    if not first_name:
-        first_name = email.split("@", 1)[0] or "User"
-
-    return first_name, last_name
 
 
 async def _provision_user_for_oidc(
@@ -172,7 +131,7 @@ async def _provision_user_for_oidc(
     email: str,
     userinfo: Mapping[str, object],
 ) -> User:
-    first_name, last_name = _userinfo_name_parts(userinfo, email)
+    first_name, last_name = userinfo_name_parts(userinfo, email)
     user = User(
         email=email,
         first_name=first_name,
@@ -207,6 +166,45 @@ async def _render_profile_template(
             "identity_error": identity_error,
             "oidc_enabled": oidc_enabled(),
         },
+        status_code=status_code,
+    )
+
+
+async def _resolve_link_user_or_redirect(
+    request: Request,
+    *,
+    session: AsyncSession,
+    link_user_id: uuid.UUID,
+) -> User | RedirectResponse:
+    try:
+        return await _get_user_or_404(session, link_user_id)
+    except HTTPException:
+        clear_oidc_link_user_id(request)
+        return RedirectResponse(url="/login", status_code=303)
+
+
+async def _render_link_error(
+    request: Request,
+    *,
+    session: AsyncSession,
+    link_user_id: uuid.UUID,
+    message: str,
+    status_code: int,
+) -> Response:
+    resolved = await _resolve_link_user_or_redirect(
+        request,
+        session=session,
+        link_user_id=link_user_id,
+    )
+    if isinstance(resolved, RedirectResponse):
+        return resolved
+
+    clear_oidc_link_user_id(request)
+    return await _render_profile_template(
+        request,
+        session=session,
+        user=resolved,
+        identity_error=message,
         status_code=status_code,
     )
 
@@ -332,10 +330,7 @@ async def oidc_start(request: Request) -> Response:
     if settings.oidc_debug_logging:
         logger.info("OIDC start redirect initiated: redirect_uri=%s", redirect_uri)
     oidc_client = _oidc_oauth_client()
-    prompt = (settings.oidc_auth_prompt or "").strip()
-    authorize_params: dict[str, str] = {}
-    if prompt:
-        authorize_params["prompt"] = prompt
+    authorize_params = build_authorize_params(settings.oidc_auth_prompt)
 
     return cast(
         Response,
@@ -350,7 +345,7 @@ async def oidc_callback(
 ) -> Response:
     settings = get_settings()
     debug_oidc = settings.oidc_debug_logging
-    link_user_id = _get_oidc_link_user_id(request)
+    link_user_id = get_oidc_link_user_id(request)
 
     if not oidc_enabled():
         if debug_oidc:
@@ -365,16 +360,11 @@ async def oidc_callback(
         if debug_oidc:
             logger.info("OIDC callback OAuthError during token/id token exchange")
         if link_user_id is not None:
-            _clear_oidc_link_user_id(request)
-            try:
-                link_user = await _get_user_or_404(session, link_user_id)
-            except HTTPException:
-                return RedirectResponse(url="/login", status_code=303)
-            return await _render_profile_template(
+            return await _render_link_error(
                 request,
                 session=session,
-                user=link_user,
-                identity_error="SSO linking was cancelled or failed.",
+                link_user_id=link_user_id,
+                message="SSO linking was cancelled or failed.",
                 status_code=400,
             )
         return RedirectResponse(url="/login", status_code=303)
@@ -383,28 +373,11 @@ async def oidc_callback(
     if debug_oidc:
         logger.info("OIDC callback token keys=%s", sorted(token_keys))
 
-    parsed_userinfo: Mapping[str, object] | None = None
-    if "id_token" in token:
-        try:
-            parsed_userinfo = _as_userinfo_mapping(await oidc_client.parse_id_token(request, token))
-        except TypeError:
-            parsed_userinfo = _as_userinfo_mapping(
-                await oidc_client.parse_id_token(token, nonce=None)
-            )
-        except Exception:
-            if debug_oidc:
-                logger.info(
-                    "OIDC callback parse_id_token failed; falling back to userinfo endpoint"
-                )
-
-    if parsed_userinfo is None:
-        parsed_userinfo = _as_userinfo_mapping(await oidc_client.userinfo(token=token))
-
-    userinfo = parsed_userinfo
-
-    sub = str(userinfo.get("sub", ""))
-    email = str(userinfo.get("email", "")).strip().lower()
-    email_verified = _claim_is_truthy(userinfo.get("email_verified"))
+    userinfo = await parse_userinfo_from_token(oidc_client, request, token)
+    claims: OidcIdentityClaims = parse_identity_claims(userinfo)
+    sub = claims.sub
+    email = claims.email
+    email_verified = claims.email_verified
 
     if debug_oidc:
         logger.info(
@@ -424,16 +397,11 @@ async def oidc_callback(
                 email_verified,
             )
         if link_user_id is not None:
-            _clear_oidc_link_user_id(request)
-            try:
-                link_user = await _get_user_or_404(session, link_user_id)
-            except HTTPException:
-                return RedirectResponse(url="/login", status_code=303)
-            return await _render_profile_template(
+            return await _render_link_error(
                 request,
                 session=session,
-                user=link_user,
-                identity_error="SSO provider did not return required identity claims.",
+                link_user_id=link_user_id,
+                message="SSO provider did not return required identity claims.",
                 status_code=403,
             )
         return RedirectResponse(url="/login", status_code=303)
@@ -456,14 +424,22 @@ async def oidc_callback(
     ext_repo = ExternalIdentityRepository(session)
 
     if link_user_id is not None:
-        link_user = await _get_user_or_404(session, link_user_id)
+        resolved_link_user = await _resolve_link_user_or_redirect(
+            request,
+            session=session,
+            link_user_id=link_user_id,
+        )
+        if isinstance(resolved_link_user, RedirectResponse):
+            return resolved_link_user
+
+        link_user = resolved_link_user
         if not link_user.is_active:
-            _clear_oidc_link_user_id(request)
+            clear_oidc_link_user_id(request)
             return RedirectResponse(url="/login", status_code=303)
 
         ext = await ext_repo.get_by_provider_subject("oidc", sub)
         if ext is not None and ext.user_id != link_user.id:
-            _clear_oidc_link_user_id(request)
+            clear_oidc_link_user_id(request)
             return await _render_profile_template(
                 request,
                 session=session,
@@ -473,7 +449,7 @@ async def oidc_callback(
             )
 
         if email != link_user.email:
-            _clear_oidc_link_user_id(request)
+            clear_oidc_link_user_id(request)
             return await _render_profile_template(
                 request,
                 session=session,
@@ -487,7 +463,7 @@ async def oidc_callback(
             session.add(ext)
             await session.commit()
 
-        _clear_oidc_link_user_id(request)
+        clear_oidc_link_user_id(request)
         request.session["user_id"] = str(link_user.id)
         return RedirectResponse(url="/profile", status_code=303)
 
@@ -601,7 +577,7 @@ async def start_profile_identity_link(
             status_code=401,
         )
 
-    _set_oidc_link_user_id(request, user.id)
+    set_oidc_link_user_id(request, user.id)
     return RedirectResponse(url="/auth/oidc/start", status_code=303)
 
 
