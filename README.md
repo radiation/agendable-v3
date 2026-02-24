@@ -5,6 +5,7 @@
 [![Dependency Scan](https://github.com/radiation/agendable-v3/actions/workflows/dependency-scan.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/dependency-scan.yml)
 [![Semgrep](https://github.com/radiation/agendable-v3/actions/workflows/semgrep.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/semgrep.yml)
 [![Complexity](https://github.com/radiation/agendable-v3/actions/workflows/complexity.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/complexity.yml)
+[![Actionlint](https://github.com/radiation/agendable-v3/actions/workflows/actionlint.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/actionlint.yml)
 [![codecov](https://codecov.io/gh/radiation/agendable-v3/graph/badge.svg)](https://codecov.io/gh/radiation/agendable-v3)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-46aef7.svg)](https://github.com/astral-sh/ruff)
@@ -256,6 +257,15 @@ Security scanning workflows:
 - `.github/workflows/complexity.yml`
 	- Runs Xenon complexity gates on PRs and pushes to `main`.
 	- Enforces thresholds: max-absolute `B`, max-modules `B`, max-average `A`.
+- `.github/workflows/actionlint.yml`
+	- Lints GitHub Actions workflow files on PRs and pushes to `main`.
+	- Catches workflow syntax/authoring issues before merge.
+
+Dependency automation:
+
+- `.github/dependabot.yml`
+	- Weekly updates for GitHub Actions and Python dependencies.
+	- Keeps SHA-pinned action references current via Dependabot PRs.
 
 Coverage is uploaded to Codecov using `.github/codecov.yml`, with ratcheting-style checks:
 
@@ -278,6 +288,8 @@ Recommended GitHub repo settings:
 	- `pip-audit`
 6. Require additional quality checks for PRs:
 	- `Semgrep Scan`
+	- `Xenon Complexity Gate`
+	- `Actionlint`
 	- `Xenon Complexity Gate`
 
 For private repos, add `CODECOV_TOKEN` in GitHub Actions secrets if required by your Codecov setup.
