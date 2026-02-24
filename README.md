@@ -1,6 +1,8 @@
 ## Agendable
 
 [![CI](https://github.com/radiation/agendable-v3/actions/workflows/ci.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/radiation/agendable-v3/actions/workflows/codeql.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/codeql.yml)
+[![Dependency Scan](https://github.com/radiation/agendable-v3/actions/workflows/dependency-scan.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/dependency-scan.yml)
 [![codecov](https://codecov.io/gh/radiation/agendable-v3/graph/badge.svg)](https://codecov.io/gh/radiation/agendable-v3)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-46aef7.svg)](https://github.com/astral-sh/ruff)
@@ -236,6 +238,16 @@ This repo includes CI at `.github/workflows/ci.yml` that runs on PRs and pushes 
 - `mypy --strict src`
 - `pytest` with coverage report upload
 
+Security scanning workflows:
+
+- `.github/workflows/codeql.yml`
+	- Runs GitHub CodeQL on PRs, pushes to `main`, and weekly.
+	- Surfaces findings in GitHub code scanning alerts / Security tab.
+- `.github/workflows/dependency-scan.yml`
+	- Exports locked dependencies from `uv.lock` and runs `pip-audit`.
+	- Runs on PRs, pushes to `main`, and weekly.
+	- Fails when known vulnerable package versions are detected.
+
 Coverage is uploaded to Codecov using `.github/codecov.yml`, with ratcheting-style checks:
 
 - `codecov/project` target is `auto` (do not regress overall coverage)
@@ -250,6 +262,9 @@ Recommended GitHub repo settings:
 4. Require Codecov checks for PRs:
 	- `codecov/project`
 	- `codecov/patch`
+5. Require security checks for PRs:
+	- `CodeQL Analyze`
+	- `pip-audit`
 
 For private repos, add `CODECOV_TOKEN` in GitHub Actions secrets if required by your Codecov setup.
 For this public repo, tokenless uploads should work, but adding `CODECOV_TOKEN` is also valid and supported by the workflow.

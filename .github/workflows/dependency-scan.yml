@@ -1,0 +1,34 @@
+name: Dependency Scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "43 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Export locked dependencies
+        run: uv export --frozen --format requirements-txt --no-hashes --output-file requirements-audit.txt
+
+      - name: Run pip-audit
+        run: uvx pip-audit -r requirements-audit.txt
