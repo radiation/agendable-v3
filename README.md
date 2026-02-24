@@ -6,7 +6,7 @@
 [![Semgrep](https://github.com/radiation/agendable-v3/actions/workflows/semgrep.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/semgrep.yml)
 [![Complexity](https://github.com/radiation/agendable-v3/actions/workflows/complexity.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/complexity.yml)
 [![Actionlint](https://github.com/radiation/agendable-v3/actions/workflows/actionlint.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/actionlint.yml)
-[![codecov](https://codecov.io/gh/radiation/agendable-v3/graph/badge.svg)](https://codecov.io/gh/radiation/agendable-v3)
+[![codecov](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.codecov.io%2Fapi%2Fv2%2Fgithub%2Fradiation%2Frepos%2Fagendable-v3&query=%24.totals.coverage&suffix=%25&label=codecov)](https://codecov.io/gh/radiation/agendable-v3)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-46aef7.svg)](https://github.com/astral-sh/ruff)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
