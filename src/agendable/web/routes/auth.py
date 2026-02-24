@@ -15,6 +15,7 @@ from agendable.auth import hash_password, require_user, verify_password
 from agendable.db import get_session
 from agendable.db.models import ExternalIdentity, User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
+from agendable.logging_config import log_with_fields
 from agendable.settings import get_settings
 from agendable.sso_oidc import oidc_enabled
 from agendable.sso_oidc_flow import (
@@ -328,7 +329,12 @@ async def oidc_start(request: Request) -> Response:
 
     redirect_uri = str(request.url_for("oidc_callback"))
     if settings.oidc_debug_logging:
-        logger.info("OIDC start redirect initiated: redirect_uri=%s", redirect_uri)
+        log_with_fields(
+            logger,
+            logging.INFO,
+            "oidc start redirect initiated",
+            redirect_uri=redirect_uri,
+        )
     oidc_client = _oidc_oauth_client()
     authorize_params = build_authorize_params(settings.oidc_auth_prompt)
 
@@ -380,12 +386,14 @@ async def oidc_callback(
     email_verified = claims.email_verified
 
     if debug_oidc:
-        logger.info(
-            "OIDC callback claims parsed: sub_present=%s email=%s email_verified=%s claim_keys=%s",
-            bool(sub),
-            email,
-            email_verified,
-            sorted(userinfo.keys()),
+        log_with_fields(
+            logger,
+            logging.INFO,
+            "oidc callback claims parsed",
+            sub_present=bool(sub),
+            email=email,
+            email_verified=email_verified,
+            claim_keys=sorted(userinfo.keys()),
         )
 
     if not sub or not email or not email_verified:
@@ -440,6 +448,15 @@ async def oidc_callback(
         ext = await ext_repo.get_by_provider_subject("oidc", sub)
         if ext is not None and ext.user_id != link_user.id:
             clear_oidc_link_user_id(request)
+            if debug_oidc:
+                log_with_fields(
+                    logger,
+                    logging.WARNING,
+                    "oidc link rejected already linked",
+                    sub=sub,
+                    requested_user_id=link_user.id,
+                    existing_user_id=ext.user_id,
+                )
             return await _render_profile_template(
                 request,
                 session=session,
@@ -450,6 +467,15 @@ async def oidc_callback(
 
         if email != link_user.email:
             clear_oidc_link_user_id(request)
+            if debug_oidc:
+                log_with_fields(
+                    logger,
+                    logging.WARNING,
+                    "oidc link rejected email mismatch",
+                    requested_user_id=link_user.id,
+                    profile_email=link_user.email,
+                    oidc_email=email,
+                )
             return await _render_profile_template(
                 request,
                 session=session,
@@ -522,7 +548,14 @@ async def oidc_callback(
         await session.commit()
 
     if debug_oidc:
-        logger.info("OIDC callback success user_id=%s email=%s", user.id, user.email)
+        log_with_fields(
+            logger,
+            logging.INFO,
+            "oidc callback success",
+            user_id=user.id,
+            email=user.email,
+            link_mode=link_user_id is not None,
+        )
 
     await _maybe_promote_bootstrap_admin(user, session)
 

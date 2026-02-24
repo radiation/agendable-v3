@@ -14,6 +14,11 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./agendable.db"
 
+    # Logging
+    log_level: str = "INFO"
+    log_json: bool = False
+    log_http_requests: bool = True
+
     # For local development
     auto_create_db: bool = False
 

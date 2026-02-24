@@ -89,3 +89,16 @@ async def test_signup_rejects_invalid_timezone(client: AsyncClient) -> None:
 
     assert resp.status_code == 400
     assert "Unknown timezone" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_request_id_header_is_propagated_or_generated(client: AsyncClient) -> None:
+    with_header = await client.get(
+        "/", headers={"X-Request-ID": "req-test-123"}, follow_redirects=False
+    )
+    assert with_header.status_code == 303
+    assert with_header.headers["x-request-id"] == "req-test-123"
+
+    generated = await client.get("/", follow_redirects=False)
+    assert generated.status_code == 303
+    assert generated.headers.get("x-request-id")

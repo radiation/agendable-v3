@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -9,8 +10,11 @@ from sqlalchemy.orm import selectinload
 
 import agendable.db as db
 from agendable.db.models import Base, MeetingOccurrence, MeetingSeries, Reminder, ReminderChannel
+from agendable.logging_config import configure_logging, log_with_fields
 from agendable.reminders import ReminderEmail, ReminderSender, as_utc, build_reminder_sender
 from agendable.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 async def _init_db() -> None:
@@ -60,7 +64,7 @@ async def _run_due_reminders(sender: ReminderSender | None = None) -> None:
 
         await session.commit()
 
-    print(f"Sent {sent} reminders; skipped {skipped} reminders")
+    log_with_fields(logger, logging.INFO, "reminder run complete", sent=sent, skipped=skipped)
 
 
 async def _run_reminders_worker(poll_seconds: int) -> None:
@@ -73,6 +77,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="agendable")
     sub = parser.add_subparsers(dest="cmd", required=True)
     settings = get_settings()
+    configure_logging(settings)
 
     sub.add_parser("init-db")
     sub.add_parser("run-reminders")

@@ -102,6 +102,23 @@ For production, override the session secret:
 
 - `AGENDABLE_SESSION_SECRET='...'`
 
+### Logging
+
+Runtime logging is configured via Python's built-in `logging` with environment-driven settings:
+
+- `AGENDABLE_LOG_LEVEL='INFO'` (supports `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)
+- `AGENDABLE_LOG_JSON='false'` (set to `true` for JSON log lines)
+- `AGENDABLE_LOG_HTTP_REQUESTS='true'` (set to `false` to suppress per-request lifecycle logs)
+
+Examples:
+
+- Local development verbose logs:
+	- `AGENDABLE_LOG_LEVEL='DEBUG'`
+- Structured logs in container/staging:
+	- `AGENDABLE_LOG_JSON='true'`
+
+Every HTTP response includes an `X-Request-ID` header. If the request already provides one, it is reused; otherwise Agendable generates one.
+
 ### SSO groundwork
 
 The app includes an `external_identities` table to map external identity provider subjects (OIDC `sub`, SAML NameID, etc.) to internal users.

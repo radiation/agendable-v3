@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import defaultdict
 
@@ -12,9 +13,11 @@ from agendable.auth import require_admin
 from agendable.db import get_session
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
+from agendable.logging_config import log_with_fields
 from agendable.web.routes.common import templates
 
 router = APIRouter()
+logger = logging.getLogger("agendable.admin")
 
 
 def _parse_bool(raw: str) -> bool:
@@ -83,6 +86,12 @@ async def admin_users(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_admin),
 ) -> HTMLResponse:
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "admin users viewed",
+        admin_user_id=current_user.id,
+    )
     return await _render_admin_users_template(
         request,
         session=session,
@@ -105,9 +114,25 @@ async def admin_update_user_role(
     try:
         new_role = UserRole(role.strip().lower())
     except ValueError:
+        log_with_fields(
+            logger,
+            logging.WARNING,
+            "admin role update rejected invalid role",
+            admin_user_id=current_user.id,
+            target_user_id=user_id,
+            requested_role=role,
+        )
         raise HTTPException(status_code=400, detail="Invalid role") from None
 
     if user.id == current_user.id and new_role != UserRole.admin:
+        log_with_fields(
+            logger,
+            logging.WARNING,
+            "admin role update rejected self-demotion",
+            admin_user_id=current_user.id,
+            target_user_id=user.id,
+            requested_role=new_role.value,
+        )
         return await _render_admin_users_template(
             request,
             session=session,
@@ -116,8 +141,18 @@ async def admin_update_user_role(
             status_code=400,
         )
 
+    previous_role = user.role.value
     user.role = new_role
     await session.commit()
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "admin role updated",
+        admin_user_id=current_user.id,
+        target_user_id=user.id,
+        previous_role=previous_role,
+        new_role=new_role.value,
+    )
     return RedirectResponse(url="/admin/users", status_code=303)
 
 
@@ -134,6 +169,14 @@ async def admin_update_user_active(
 
     new_is_active = _parse_bool(is_active)
     if user.id == current_user.id and not new_is_active:
+        log_with_fields(
+            logger,
+            logging.WARNING,
+            "admin active update rejected self-deactivation",
+            admin_user_id=current_user.id,
+            target_user_id=user.id,
+            requested_is_active=new_is_active,
+        )
         return await _render_admin_users_template(
             request,
             session=session,
@@ -142,6 +185,16 @@ async def admin_update_user_active(
             status_code=400,
         )
 
+    previous_is_active = user.is_active
     user.is_active = new_is_active
     await session.commit()
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "admin active updated",
+        admin_user_id=current_user.id,
+        target_user_id=user.id,
+        previous_is_active=previous_is_active,
+        new_is_active=new_is_active,
+    )
     return RedirectResponse(url="/admin/users", status_code=303)

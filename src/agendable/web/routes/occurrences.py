@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -25,6 +26,7 @@ from agendable.db.repos import (
     TaskRepository,
     UserRepository,
 )
+from agendable.logging_config import log_with_fields
 from agendable.web.routes.common import (
     format_datetime_local_value,
     parse_dt_for_timezone,
@@ -33,6 +35,7 @@ from agendable.web.routes.common import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("agendable.occurrences")
 
 
 def _ensure_occurrence_writable(occurrence_id: uuid.UUID, is_completed: bool) -> None:
@@ -185,6 +188,17 @@ async def create_task(
     )
     session.add(task)
     await session.commit()
+
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "task created",
+        user_id=current_user.id,
+        occurrence_id=occurrence_id,
+        task_id=task.id,
+        assigned_user_id=final_assignee_id,
+        due_at=final_due_at,
+    )
     return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
 
 
@@ -217,6 +231,15 @@ async def add_attendee(
             MeetingOccurrenceAttendee(occurrence_id=occurrence_id, user_id=attendee_user.id)
         )
         await session.commit()
+        log_with_fields(
+            logger,
+            logging.INFO,
+            "attendee added",
+            user_id=current_user.id,
+            occurrence_id=occurrence_id,
+            attendee_user_id=attendee_user.id,
+            attendee_email=attendee_user.email,
+        )
 
     return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
 
@@ -243,6 +266,16 @@ async def toggle_task(
 
     task.is_done = not task.is_done
     await session.commit()
+
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "task toggled",
+        user_id=current_user.id,
+        occurrence_id=occurrence.id,
+        task_id=task.id,
+        is_done=task.is_done,
+    )
     return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
 
 
@@ -260,6 +293,15 @@ async def add_agenda_item(
     item = AgendaItem(occurrence_id=occurrence_id, body=body)
     session.add(item)
     await session.commit()
+
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "agenda item created",
+        user_id=current_user.id,
+        occurrence_id=occurrence_id,
+        agenda_item_id=item.id,
+    )
 
     return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
 
@@ -287,6 +329,16 @@ async def toggle_agenda_item(
     item.is_done = not item.is_done
 
     await session.commit()
+
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "agenda item toggled",
+        user_id=current_user.id,
+        occurrence_id=occurrence.id,
+        agenda_item_id=item.id,
+        is_done=item.is_done,
+    )
     return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
 
 
@@ -299,6 +351,13 @@ async def complete_occurrence(
     occurrence, _ = await _get_owned_occurrence(session, occurrence_id, current_user.id)
 
     if occurrence.is_completed:
+        log_with_fields(
+            logger,
+            logging.INFO,
+            "occurrence already completed",
+            user_id=current_user.id,
+            occurrence_id=occurrence.id,
+        )
         return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
 
     occ_repo = MeetingOccurrenceRepository(session)
@@ -319,6 +378,15 @@ async def complete_occurrence(
 
     occurrence.is_completed = True
     await session.commit()
+
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "occurrence completed",
+        user_id=current_user.id,
+        occurrence_id=occurrence.id,
+        next_occurrence_id=(next_occurrence.id if next_occurrence is not None else None),
+    )
 
     redirect_occurrence_id = next_occurrence.id if next_occurrence is not None else occurrence.id
     return RedirectResponse(url=f"/occurrences/{redirect_occurrence_id}", status_code=303)

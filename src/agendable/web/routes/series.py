@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -12,6 +13,7 @@ from agendable.auth import require_user
 from agendable.db import get_session
 from agendable.db.models import MeetingOccurrence, MeetingSeries, User
 from agendable.db.repos import MeetingOccurrenceRepository, MeetingSeriesRepository
+from agendable.logging_config import log_with_fields
 from agendable.recurrence import build_rrule, generate_datetimes
 from agendable.reminders import build_default_email_reminder
 from agendable.settings import get_settings
@@ -25,6 +27,7 @@ from agendable.web.routes.common import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("agendable.series")
 
 
 @router.get("/", response_class=Response)
@@ -165,6 +168,18 @@ async def create_series(
 
     await session.commit()
 
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "series created",
+        user_id=current_user.id,
+        series_id=series.id,
+        occurrence_count=len(occurrences),
+        reminder_minutes_before=series.reminder_minutes_before,
+        recurrence_freq=recurrence_freq,
+        recurrence_interval=recurrence_interval,
+    )
+
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -241,5 +256,15 @@ async def create_occurrence(
         )
 
     await session.commit()
+
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "occurrence created",
+        user_id=current_user.id,
+        series_id=series_id,
+        occurrence_id=occ.id,
+        scheduled_at=occ.scheduled_at,
+    )
 
     return RedirectResponse(url=f"/series/{series_id}", status_code=303)

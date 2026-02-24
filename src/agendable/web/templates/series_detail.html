@@ -15,6 +15,7 @@
 
 <section>
     <h3>Meetings</h3>
+    {% set display_tz = series.recurrence_timezone if series.recurrence_timezone else current_user.timezone %}
 
     <form method="post" action="/series/{{ series.id }}/occurrences"
         style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
@@ -28,7 +29,7 @@
     <ul>
         {% for o in occurrences %}
         <li>
-            <a href="/occurrences/{{ o.id }}">{{ o.scheduled_at|format_dt(current_user.timezone) }}</a>
+            <a href="/occurrences/{{ o.id }}">{{ o.scheduled_at|format_dt(display_tz) }}</a>
             {% if active_occurrence and o.id == active_occurrence.id %}
             <strong>(active)</strong>
             {% endif %}
