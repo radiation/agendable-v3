@@ -18,4 +18,4 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Run actionlint
-        uses: rhysd/actionlint@e7d448ef7507c20fc4c88a95d0c448b848cd6127 # v1.7.8
+        uses: rhysd/actionlint@393031adb9afb225ee52ae2ccd7a5af5525e03e8 # v1.7.11
