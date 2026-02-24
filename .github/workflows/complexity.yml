@@ -33,6 +33,14 @@ jobs:
           files: |
             src/**/*.py
 
+      - name: Show complexity report (PR changed files)
+        if: github.event_name == 'pull_request' && steps.changed_py.outputs.any_changed == 'true'
+        run: |
+          radon cc \
+            --show-complexity \
+            --average \
+            ${{ steps.changed_py.outputs.all_changed_files }}
+
       - name: Enforce complexity thresholds (PR changed files)
         if: github.event_name == 'pull_request' && steps.changed_py.outputs.any_changed == 'true'
         run: |
@@ -45,6 +53,14 @@ jobs:
       - name: Skip complexity gate (no changed Python files)
         if: github.event_name == 'pull_request' && steps.changed_py.outputs.any_changed != 'true'
         run: echo "No changed Python files under src/; skipping Xenon complexity check."
+
+      - name: Show complexity report (main full scan)
+        if: github.event_name != 'pull_request'
+        run: |
+          radon cc \
+            --show-complexity \
+            --average \
+            src/agendable
 
       - name: Enforce complexity thresholds (main full scan)
         if: github.event_name != 'pull_request'
