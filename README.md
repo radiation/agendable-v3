@@ -238,7 +238,7 @@ This repo includes CI at `.github/workflows/ci.yml` that runs on PRs and pushes 
 
 - `ruff check`
 - `mypy --strict src`
-- `pytest` with coverage report upload
+- `pytest` with coverage + JUnit test results upload
 
 Security scanning workflows:
 
@@ -261,6 +261,8 @@ Coverage is uploaded to Codecov using `.github/codecov.yml`, with ratcheting-sty
 
 - `codecov/project` target is `auto` (do not regress overall coverage)
 - `codecov/patch` target is `auto` (require new/changed code to maintain patch coverage)
+
+Test results are uploaded to Codecov via `codecov/test-results-action`, which provides pass/fail test visibility alongside coverage data.
 
 Recommended GitHub repo settings:
 
