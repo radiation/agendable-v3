@@ -11,11 +11,12 @@ from starlette.responses import Response
 
 from agendable.auth import require_user
 from agendable.db import get_session
-from agendable.db.models import MeetingOccurrence, MeetingSeries, User
+from agendable.db.models import MeetingOccurrence, User
 from agendable.db.repos import MeetingOccurrenceRepository, MeetingSeriesRepository
 from agendable.logging_config import log_with_fields
-from agendable.recurrence import build_rrule, generate_datetimes
+from agendable.recurrence import build_rrule
 from agendable.reminders import build_default_email_reminder
+from agendable.services import create_series_with_occurrences
 from agendable.settings import get_settings
 from agendable.web.routes.common import (
     parse_date,
@@ -118,55 +119,21 @@ async def create_series(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid recurrence settings") from exc
 
-    series = MeetingSeries(
-        owner_user_id=current_user.id,
-        title=title,
-        default_interval_days=7,
-        reminder_minutes_before=reminder_minutes_before,
-        recurrence_rrule=normalized_rrule,
-        recurrence_dtstart=dtstart,
-        recurrence_timezone=recurrence_timezone.strip(),
-    )
-    session.add(series)
-
-    await session.flush()
-
-    try:
-        scheduled = generate_datetimes(
-            rrule=normalized_rrule, dtstart=dtstart, count=generate_count
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid recurrence") from exc
-
-    if not scheduled:
-        raise HTTPException(status_code=400, detail="RRULE produced no occurrences")
-
-    occurrences = [
-        MeetingOccurrence(
-            series_id=series.id,
-            scheduled_at=dt.astimezone(UTC),
-            notes="",
-        )
-        for dt in scheduled
-    ]
-    session.add_all(occurrences)
-    await session.flush()
-
     settings = get_settings()
-    if settings.enable_default_email_reminders:
-        session.add_all(
-            [
-                build_default_email_reminder(
-                    occurrence_id=occ.id,
-                    occurrence_scheduled_at=occ.scheduled_at,
-                    settings=settings,
-                    lead_minutes_before=series.reminder_minutes_before,
-                )
-                for occ in occurrences
-            ]
+    try:
+        series, occurrences = await create_series_with_occurrences(
+            session,
+            owner_user_id=current_user.id,
+            title=title,
+            reminder_minutes_before=reminder_minutes_before,
+            recurrence_rrule=normalized_rrule,
+            recurrence_dtstart=dtstart,
+            recurrence_timezone=recurrence_timezone,
+            generate_count=generate_count,
+            settings=settings,
         )
-
-    await session.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     log_with_fields(
         logger,

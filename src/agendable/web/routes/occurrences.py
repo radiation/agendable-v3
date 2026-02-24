@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,6 +27,7 @@ from agendable.db.repos import (
     UserRepository,
 )
 from agendable.logging_config import log_with_fields
+from agendable.services import complete_occurrence_and_roll_forward
 from agendable.web.routes.common import (
     format_datetime_local_value,
     parse_dt_for_timezone,
@@ -360,24 +361,10 @@ async def complete_occurrence(
         )
         return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
 
-    occ_repo = MeetingOccurrenceRepository(session)
-    next_occurrence = await occ_repo.get_next_for_series(
-        occurrence.series_id, occurrence.scheduled_at
+    next_occurrence = await complete_occurrence_and_roll_forward(
+        session,
+        occurrence=occurrence,
     )
-    if next_occurrence is not None:
-        await session.execute(
-            update(Task)
-            .where(Task.occurrence_id == occurrence.id, Task.is_done.is_(False))
-            .values(occurrence_id=next_occurrence.id, due_at=next_occurrence.scheduled_at)
-        )
-        await session.execute(
-            update(AgendaItem)
-            .where(AgendaItem.occurrence_id == occurrence.id, AgendaItem.is_done.is_(False))
-            .values(occurrence_id=next_occurrence.id)
-        )
-
-    occurrence.is_completed = True
-    await session.commit()
 
     log_with_fields(
         logger,
