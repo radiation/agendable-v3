@@ -36,13 +36,27 @@ services:
       - ./dev/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
     command: [ "start-dev", "--import-realm" ]
 
-  web:
+  migrate:
     build:
       context: .
       dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      AGENDABLE_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/agendable
+      AGENDABLE_AUTO_CREATE_DB: "false"
+    volumes:
+      - ./:/app
+    command: alembic upgrade head
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     environment:
@@ -63,8 +77,8 @@ services:
       context: .
       dockerfile: Dockerfile
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       AGENDABLE_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/agendable
       AGENDABLE_SMTP_HOST: mailpit

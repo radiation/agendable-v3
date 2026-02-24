@@ -21,21 +21,20 @@ SQLite is the default via `AGENDABLE_DATABASE_URL=sqlite+aiosqlite:///./agendabl
 
 ### Run with Docker + Postgres (live reload)
 
-First time (or after new migrations):
-
-- Start Postgres + apply migrations: `docker compose run --rm web alembic upgrade head`
-
-Then run the app:
+One-command startup (includes automatic migrations):
 
 - Build + start: `docker compose up --build`
 - Open: `http://127.0.0.1:8000/`
 - Mailpit inbox UI: `http://127.0.0.1:8025/`
 - Stop: `docker compose down`
 
+Compose now runs a one-shot `migrate` service (`alembic upgrade head`) before starting both `web` and `reminder-worker`.
+
 The compose setup includes:
 
 - Postgres (`postgres:17`) with a persistent Docker volume (`postgres_data`)
 - Mailpit (`axllent/mailpit`) for local email capture/testing
+- `migrate` one-shot service that applies Alembic migrations before app startup
 - `reminder-worker` service that runs `agendable run-reminders-worker` every 30s
 - A bind mount from local repo to container (`.:/app`)
 - Live reload command in the app container:
