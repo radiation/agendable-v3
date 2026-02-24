@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db.models import User
+
+_DEFAULT_TEST_PASSWORD = os.environ.get("AGENDABLE_TEST_DEFAULT_PASSWORD", "pw123456")
 
 
 @dataclass
@@ -39,8 +42,9 @@ async def signup_and_login(
     first_name: str,
     last_name: str,
     email: str,
-    password: str = "pw123456",
+    password: str | None = None,
 ) -> None:
+    effective_password = password if password is not None else _DEFAULT_TEST_PASSWORD
     response = await client.post(
         "/signup",
         data={
@@ -48,7 +52,7 @@ async def signup_and_login(
             "last_name": last_name,
             "timezone": "UTC",
             "email": email,
-            "password": password,
+            "password": effective_password,
         },
         follow_redirects=True,
     )

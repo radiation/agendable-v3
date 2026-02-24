@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from authlib.integrations.starlette_client import OAuthError
@@ -36,6 +36,10 @@ router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 _OIDC_ENABLED_ATTR = "oidc_enabled"
 _OIDC_CLIENT_ATTR = "_oidc_oauth_client"
+
+
+def _login_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/login", status_code=303)
 
 
 def _oidc_enabled() -> bool:
@@ -112,163 +116,125 @@ async def _render_link_error(
     )
 
 
-@router.get("/auth/oidc/callback", name="oidc_callback")
-async def oidc_callback(
+async def _handle_link_callback(
     request: Request,
-    session: AsyncSession = Depends(get_session),
+    *,
+    session: AsyncSession,
+    link_user_id: uuid.UUID,
+    sub: str,
+    email: str,
+    debug_oidc: bool,
 ) -> Response:
-    settings = get_settings()
-    debug_oidc = settings.oidc_debug_logging
-    link_user_id = get_oidc_link_user_id(request)
-
-    if not _oidc_enabled():
-        if debug_oidc:
-            logger.info("OIDC callback aborted: provider is disabled")
-        raise HTTPException(status_code=404)
-
-    oidc_client = _oidc_oauth_client()
-
-    try:
-        token = await oidc_client.authorize_access_token(request)
-    except OAuthError:
-        if debug_oidc:
-            logger.info("OIDC callback OAuthError during token/id token exchange")
-        if link_user_id is not None:
-            return await _render_link_error(
-                request,
-                session=session,
-                link_user_id=link_user_id,
-                message="SSO linking was cancelled or failed.",
-                status_code=400,
-            )
-        return RedirectResponse(url="/login", status_code=303)
-
-    token_keys: list[str] = [str(key) for key in token]
-    if debug_oidc:
-        logger.info("OIDC callback token keys=%s", sorted(token_keys))
-
-    userinfo = await parse_userinfo_from_token(oidc_client, request, token)
-    claims: OidcIdentityClaims = parse_identity_claims(userinfo)
-    sub = claims.sub
-    email = claims.email
-    email_verified = claims.email_verified
-
-    if debug_oidc:
-        log_with_fields(
-            logger,
-            logging.INFO,
-            "oidc callback claims parsed",
-            sub_present=bool(sub),
-            email=email,
-            email_verified=email_verified,
-            claim_keys=sorted(userinfo.keys()),
-        )
-
-    if not sub or not email or not email_verified:
-        if debug_oidc:
-            logger.info(
-                "OIDC callback rejected claims: sub_present=%s email_present=%s email_verified=%s",
-                bool(sub),
-                bool(email),
-                email_verified,
-            )
-        if link_user_id is not None:
-            return await _render_link_error(
-                request,
-                session=session,
-                link_user_id=link_user_id,
-                message="SSO provider did not return required identity claims.",
-                status_code=403,
-            )
-        return RedirectResponse(url="/login", status_code=303)
-
-    if settings.allowed_email_domain is not None:
-        allowed = settings.allowed_email_domain.strip().lower().lstrip("@")
-        if not email.endswith(f"@{allowed}"):
-            if debug_oidc:
-                logger.info(
-                    "OIDC callback denied by allowed_email_domain: email=%s allowed_domain=%s",
-                    email,
-                    allowed,
-                )
-            return auth_routes._render_login_template(
-                request,
-                error="Email domain not allowed",
-                status_code=403,
-            )
-
     ext_repo = ExternalIdentityRepository(session)
 
-    if link_user_id is not None:
-        resolved_link_user = await _resolve_link_user_or_redirect(
+    resolved_link_user = await _resolve_link_user_or_redirect(
+        request,
+        session=session,
+        link_user_id=link_user_id,
+    )
+    if isinstance(resolved_link_user, RedirectResponse):
+        return resolved_link_user
+
+    link_user = resolved_link_user
+
+    link_resolution = await resolve_oidc_link_resolution(
+        session,
+        link_user=link_user,
+        sub=sub,
+        email=email,
+    )
+
+    if link_resolution.should_redirect_login:
+        clear_oidc_link_user_id(request)
+        return _login_redirect()
+
+    if link_resolution.error == "already_linked_other_user":
+        ext = await ext_repo.get_by_provider_subject("oidc", sub)
+        clear_oidc_link_user_id(request)
+        if debug_oidc:
+            log_with_fields(
+                logger,
+                logging.WARNING,
+                "oidc link rejected already linked",
+                sub=sub,
+                requested_user_id=link_user.id,
+                existing_user_id=(ext.user_id if ext is not None else None),
+            )
+        return await auth_routes._render_profile_template(
             request,
             session=session,
-            link_user_id=link_user_id,
-        )
-        if isinstance(resolved_link_user, RedirectResponse):
-            return resolved_link_user
-
-        link_user = resolved_link_user
-
-        link_resolution = await resolve_oidc_link_resolution(
-            session,
-            link_user=link_user,
-            sub=sub,
-            email=email,
+            user=link_user,
+            identity_error="This SSO account is already linked to a different user.",
+            status_code=403,
         )
 
-        if link_resolution.should_redirect_login:
-            clear_oidc_link_user_id(request)
-            return RedirectResponse(url="/login", status_code=303)
-
-        if link_resolution.error == "already_linked_other_user":
-            ext = await ext_repo.get_by_provider_subject("oidc", sub)
-            clear_oidc_link_user_id(request)
-            if debug_oidc:
-                log_with_fields(
-                    logger,
-                    logging.WARNING,
-                    "oidc link rejected already linked",
-                    sub=sub,
-                    requested_user_id=link_user.id,
-                    existing_user_id=(ext.user_id if ext is not None else None),
-                )
-            return await auth_routes._render_profile_template(
-                request,
-                session=session,
-                user=link_user,
-                identity_error="This SSO account is already linked to a different user.",
-                status_code=403,
-            )
-
-        if link_resolution.error == "email_mismatch":
-            clear_oidc_link_user_id(request)
-            if debug_oidc:
-                log_with_fields(
-                    logger,
-                    logging.WARNING,
-                    "oidc link rejected email mismatch",
-                    requested_user_id=link_user.id,
-                    profile_email=link_user.email,
-                    oidc_email=email,
-                )
-            return await auth_routes._render_profile_template(
-                request,
-                session=session,
-                user=link_user,
-                identity_error="SSO account email must match your profile email.",
-                status_code=403,
-            )
-
-        if link_resolution.create_identity:
-            ext = ExternalIdentity(user_id=link_user.id, provider="oidc", subject=sub, email=email)
-            session.add(ext)
-            await session.commit()
-
+    if link_resolution.error == "email_mismatch":
         clear_oidc_link_user_id(request)
-        request.session["user_id"] = str(link_user.id)
-        return RedirectResponse(url="/profile", status_code=303)
+        if debug_oidc:
+            log_with_fields(
+                logger,
+                logging.WARNING,
+                "oidc link rejected email mismatch",
+                requested_user_id=link_user.id,
+                profile_email=link_user.email,
+                oidc_email=email,
+            )
+        return await auth_routes._render_profile_template(
+            request,
+            session=session,
+            user=link_user,
+            identity_error="SSO account email must match your profile email.",
+            status_code=403,
+        )
 
+    if link_resolution.create_identity:
+        ext = ExternalIdentity(user_id=link_user.id, provider="oidc", subject=sub, email=email)
+        session.add(ext)
+        await session.commit()
+
+    clear_oidc_link_user_id(request)
+    request.session["user_id"] = str(link_user.id)
+    return RedirectResponse(url="/profile", status_code=303)
+
+
+def _login_resolution_error_response(
+    request: Request,
+    *,
+    error: str | None,
+    email: str,
+    debug_oidc: bool,
+) -> Response | None:
+    if error == "inactive_user":
+        if debug_oidc:
+            logger.info("OIDC callback denied inactive user for email=%s", email)
+        return auth_routes._render_login_template(
+            request,
+            error="This account is deactivated. Contact an admin.",
+            status_code=403,
+        )
+
+    if error == "password_user_requires_link":
+        if debug_oidc:
+            logger.info("OIDC callback denied linking password-based account")
+        return auth_routes._render_login_template(
+            request,
+            error="An account with this email already exists. Sign in with password first to link SSO.",
+            status_code=403,
+        )
+
+    return None
+
+
+async def _handle_login_callback(
+    request: Request,
+    *,
+    session: AsyncSession,
+    sub: str,
+    email: str,
+    userinfo: Mapping[str, object],
+    debug_oidc: bool,
+    link_user_id: uuid.UUID | None,
+) -> Response:
     login_resolution = await resolve_oidc_login_resolution(
         session,
         sub=sub,
@@ -280,32 +246,20 @@ async def oidc_callback(
     if login_resolution.should_redirect_login:
         if debug_oidc:
             logger.info("OIDC callback identity points to missing user")
-        return RedirectResponse(url="/login", status_code=303)
+        return _login_redirect()
 
-    if login_resolution.error == "inactive_user":
-        if debug_oidc:
-            logger.info("OIDC callback denied inactive user for email=%s", email)
-        return auth_routes._render_login_template(
-            request,
-            error="This account is deactivated. Contact an admin.",
-            status_code=403,
-        )
-
-    if login_resolution.error == "password_user_requires_link":
-        if debug_oidc:
-            logger.info(
-                "OIDC callback denied linking password-based account for email=%s",
-                email,
-            )
-        return auth_routes._render_login_template(
-            request,
-            error="An account with this email already exists. Sign in with password first to link SSO.",
-            status_code=403,
-        )
+    error_response = _login_resolution_error_response(
+        request,
+        error=login_resolution.error,
+        email=email,
+        debug_oidc=debug_oidc,
+    )
+    if error_response is not None:
+        return error_response
 
     user = login_resolution.user
     if user is None:
-        return RedirectResponse(url="/login", status_code=303)
+        return _login_redirect()
 
     if login_resolution.create_identity:
         if debug_oidc:
@@ -328,6 +282,176 @@ async def oidc_callback(
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/dashboard", status_code=303)
+
+
+async def _exchange_token_or_error(
+    request: Request,
+    *,
+    oidc_client: Any,
+    debug_oidc: bool,
+    link_user_id: uuid.UUID | None,
+    session: AsyncSession,
+) -> dict[str, object] | Response:
+    try:
+        token = await oidc_client.authorize_access_token(request)
+    except OAuthError:
+        if debug_oidc:
+            logger.info("OIDC callback OAuthError during token/id token exchange")
+        if link_user_id is not None:
+            return await _render_link_error(
+                request,
+                session=session,
+                link_user_id=link_user_id,
+                message="SSO linking was cancelled or failed.",
+                status_code=400,
+            )
+        return _login_redirect()
+
+    return cast(dict[str, object], token)
+
+
+def _validate_domain_or_error(
+    request: Request,
+    *,
+    email: str,
+    allowed_email_domain: str | None,
+    debug_oidc: bool,
+) -> Response | None:
+    if allowed_email_domain is None:
+        return None
+
+    allowed = allowed_email_domain.strip().lower().lstrip("@")
+    if email.endswith(f"@{allowed}"):
+        return None
+
+    if debug_oidc:
+        logger.info(
+            "OIDC callback denied by allowed_email_domain: email=%s allowed_domain=%s",
+            email,
+            allowed,
+        )
+    return auth_routes._render_login_template(
+        request,
+        error="Email domain not allowed",
+        status_code=403,
+    )
+
+
+async def _parse_and_validate_claims_or_error(
+    request: Request,
+    *,
+    oidc_client: Any,
+    token: dict[str, object],
+    debug_oidc: bool,
+    link_user_id: uuid.UUID | None,
+    session: AsyncSession,
+) -> tuple[str, str, Mapping[str, object]] | Response:
+    userinfo = await parse_userinfo_from_token(oidc_client, request, token)
+    claims: OidcIdentityClaims = parse_identity_claims(userinfo)
+    sub = claims.sub
+    email = claims.email
+    email_verified = claims.email_verified
+
+    if debug_oidc:
+        log_with_fields(
+            logger,
+            logging.INFO,
+            "oidc callback claims parsed",
+            sub_present=bool(sub),
+            email=email,
+            email_verified=email_verified,
+            claim_keys=sorted(userinfo.keys()),
+        )
+
+    if sub and email and email_verified:
+        return sub, email, userinfo
+
+    if debug_oidc:
+        logger.info(
+            "OIDC callback rejected claims: sub_present=%s email_present=%s email_verified=%s",
+            bool(sub),
+            bool(email),
+            email_verified,
+        )
+    if link_user_id is not None:
+        return await _render_link_error(
+            request,
+            session=session,
+            link_user_id=link_user_id,
+            message="SSO provider did not return required identity claims.",
+            status_code=403,
+        )
+    return _login_redirect()
+
+
+@router.get("/auth/oidc/callback", name="oidc_callback")
+async def oidc_callback(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    settings = get_settings()
+    debug_oidc = settings.oidc_debug_logging
+    link_user_id = get_oidc_link_user_id(request)
+
+    if not _oidc_enabled():
+        if debug_oidc:
+            logger.info("OIDC callback aborted: provider is disabled")
+        raise HTTPException(status_code=404)
+
+    oidc_client = _oidc_oauth_client()
+
+    token_or_response = await _exchange_token_or_error(
+        request,
+        oidc_client=oidc_client,
+        debug_oidc=debug_oidc,
+        link_user_id=link_user_id,
+        session=session,
+    )
+    if isinstance(token_or_response, Response):
+        return token_or_response
+    token = token_or_response
+
+    claims_or_response = await _parse_and_validate_claims_or_error(
+        request,
+        oidc_client=oidc_client,
+        token=token,
+        debug_oidc=debug_oidc,
+        link_user_id=link_user_id,
+        session=session,
+    )
+    if isinstance(claims_or_response, Response):
+        return claims_or_response
+
+    sub, email, userinfo = claims_or_response
+
+    domain_error = _validate_domain_or_error(
+        request,
+        email=email,
+        allowed_email_domain=settings.allowed_email_domain,
+        debug_oidc=debug_oidc,
+    )
+    if domain_error is not None:
+        return domain_error
+
+    if link_user_id is not None:
+        return await _handle_link_callback(
+            request,
+            session=session,
+            link_user_id=link_user_id,
+            sub=sub,
+            email=email,
+            debug_oidc=debug_oidc,
+        )
+
+    return await _handle_login_callback(
+        request,
+        session=session,
+        sub=sub,
+        email=email,
+        userinfo=userinfo,
+        debug_oidc=debug_oidc,
+        link_user_id=link_user_id,
+    )
 
 
 @router.post(
