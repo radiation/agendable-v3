@@ -150,7 +150,7 @@ async def create_series(
     return RedirectResponse(url="/", status_code=303)
 
 
-@router.get("/series/{series_id}", response_class=HTMLResponse)
+@router.get("/series/{series_id}", response_class=HTMLResponse, name="series_detail")
 async def series_detail(
     request: Request,
     series_id: uuid.UUID,
@@ -197,6 +197,7 @@ async def series_detail(
 
 @router.post("/series/{series_id}/occurrences", response_class=RedirectResponse)
 async def create_occurrence(
+    request: Request,
     series_id: uuid.UUID,
     scheduled_at: str = Form(...),
     session: AsyncSession = Depends(get_session),
@@ -234,4 +235,7 @@ async def create_occurrence(
         scheduled_at=occ.scheduled_at,
     )
 
-    return RedirectResponse(url=f"/series/{series_id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for("series_detail", series_id=str(series_id)),
+        status_code=303,
+    )

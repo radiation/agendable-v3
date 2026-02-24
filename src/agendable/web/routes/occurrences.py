@@ -75,7 +75,7 @@ async def _ensure_occurrence_owner(
         raise HTTPException(status_code=404)
 
 
-@router.get("/occurrences/{occurrence_id}", response_class=HTMLResponse)
+@router.get("/occurrences/{occurrence_id}", response_class=HTMLResponse, name="occurrence_detail")
 async def occurrence_detail(
     request: Request,
     occurrence_id: uuid.UUID,
@@ -139,6 +139,7 @@ async def occurrence_detail(
 
 @router.post("/occurrences/{occurrence_id}/tasks", response_class=RedirectResponse)
 async def create_task(
+    request: Request,
     occurrence_id: uuid.UUID,
     title: str = Form(...),
     due_at_input: str | None = Form(None, alias="due_at"),
@@ -200,11 +201,15 @@ async def create_task(
         assigned_user_id=final_assignee_id,
         due_at=final_due_at,
     )
-    return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence_id)),
+        status_code=303,
+    )
 
 
 @router.post("/occurrences/{occurrence_id}/attendees", response_class=RedirectResponse)
 async def add_attendee(
+    request: Request,
     occurrence_id: uuid.UUID,
     email: str = Form(...),
     session: AsyncSession = Depends(get_session),
@@ -242,11 +247,15 @@ async def add_attendee(
             attendee_email=attendee_user.email,
         )
 
-    return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence_id)),
+        status_code=303,
+    )
 
 
 @router.post("/tasks/{task_id}/toggle", response_class=RedirectResponse)
 async def toggle_task(
+    request: Request,
     task_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
@@ -277,11 +286,15 @@ async def toggle_task(
         task_id=task.id,
         is_done=task.is_done,
     )
-    return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence.id)),
+        status_code=303,
+    )
 
 
 @router.post("/occurrences/{occurrence_id}/agenda", response_class=RedirectResponse)
 async def add_agenda_item(
+    request: Request,
     occurrence_id: uuid.UUID,
     body: str = Form(...),
     session: AsyncSession = Depends(get_session),
@@ -304,11 +317,15 @@ async def add_agenda_item(
         agenda_item_id=item.id,
     )
 
-    return RedirectResponse(url=f"/occurrences/{occurrence_id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence_id)),
+        status_code=303,
+    )
 
 
 @router.post("/agenda/{item_id}/toggle", response_class=RedirectResponse)
 async def toggle_agenda_item(
+    request: Request,
     item_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
@@ -340,11 +357,15 @@ async def toggle_agenda_item(
         agenda_item_id=item.id,
         is_done=item.is_done,
     )
-    return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence.id)),
+        status_code=303,
+    )
 
 
 @router.post("/occurrences/{occurrence_id}/complete", response_class=RedirectResponse)
 async def complete_occurrence(
+    request: Request,
     occurrence_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
@@ -359,7 +380,10 @@ async def complete_occurrence(
             user_id=current_user.id,
             occurrence_id=occurrence.id,
         )
-        return RedirectResponse(url=f"/occurrences/{occurrence.id}", status_code=303)
+        return RedirectResponse(
+            url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence.id)),
+            status_code=303,
+        )
 
     next_occurrence = await complete_occurrence_and_roll_forward(
         session,
@@ -376,4 +400,9 @@ async def complete_occurrence(
     )
 
     redirect_occurrence_id = next_occurrence.id if next_occurrence is not None else occurrence.id
-    return RedirectResponse(url=f"/occurrences/{redirect_occurrence_id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for(
+            "occurrence_detail", occurrence_id=str(redirect_occurrence_id)
+        ),
+        status_code=303,
+    )
