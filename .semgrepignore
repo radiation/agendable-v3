@@ -1,0 +1,16 @@
+# Keep Semgrep focused on app code and tests.
+
+# Environment and caches
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Build and VCS artifacts
+.git/
+
+# Generated or external content
+migrations/
+
+# Optional local data
+agendable.db

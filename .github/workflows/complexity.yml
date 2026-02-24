@@ -1,0 +1,56 @@
+name: Complexity
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  complexity:
+    name: Xenon Complexity Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install xenon
+        run: python -m pip install --upgrade pip xenon
+
+      - name: Collect changed Python files
+        if: github.event_name == 'pull_request'
+        id: changed_py
+        uses: tj-actions/changed-files@v45
+        with:
+          files: |
+            src/**/*.py
+
+      - name: Enforce complexity thresholds (PR changed files)
+        if: github.event_name == 'pull_request' && steps.changed_py.outputs.any_changed == 'true'
+        run: |
+          xenon \
+            --max-absolute B \
+            --max-modules B \
+            --max-average A \
+            ${{ steps.changed_py.outputs.all_changed_files }}
+
+      - name: Skip complexity gate (no changed Python files)
+        if: github.event_name == 'pull_request' && steps.changed_py.outputs.any_changed != 'true'
+        run: echo "No changed Python files under src/; skipping Xenon complexity check."
+
+      - name: Enforce complexity thresholds (main full scan)
+        if: github.event_name != 'pull_request'
+        run: |
+          xenon \
+            --max-absolute B \
+            --max-modules B \
+            --max-average A \
+            src/agendable
