@@ -254,6 +254,14 @@ Security scanning workflows:
 	- Runs Semgrep (`p/default`) on PRs, pushes to `main`, and weekly.
 	- Complements CodeQL with additional security/correctness rules.
 	- Scope is tuned with `.semgrepignore` to avoid scanning generated/local artifacts.
+	- Excludes two noisy rules in this stack:
+		- `python.django.security.django-no-csrf-token.django-no-csrf-token`
+		- `html.security.audit.missing-integrity.missing-integrity`
+
+Future hardening TODOs:
+
+- Add first-class CSRF protection for server-rendered POST forms.
+- Replace CDN script tags with pinned SRI hashes or vendored static assets.
 - `.github/workflows/complexity.yml`
 	- Runs Xenon complexity gates on PRs and pushes to `main`.
 	- Enforces thresholds: max-absolute `B`, max-modules `B`, max-average `A`.

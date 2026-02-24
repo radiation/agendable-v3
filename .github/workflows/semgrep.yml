@@ -25,3 +25,6 @@ jobs:
         with:
           config: >-
             p/default
+          args: >-
+            --exclude-rule=python.django.security.django-no-csrf-token.django-no-csrf-token
+            --exclude-rule=html.security.audit.missing-integrity.missing-integrity

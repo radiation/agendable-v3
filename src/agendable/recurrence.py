@@ -70,6 +70,125 @@ def _parse_rrule_parts(rrule: str) -> dict[str, list[str]]:
     return parts
 
 
+def _coerce_interval(parts: dict[str, list[str]]) -> int:
+    try:
+        interval = int(parts.get("INTERVAL", ["1"])[0])
+    except ValueError:
+        interval = 1
+    if interval < 1:
+        return 1
+    return interval
+
+
+def _time_suffix(dtstart: datetime | None, timezone: str | None) -> str:
+    if dtstart is None:
+        return ""
+
+    suffix = f" at {dtstart:%H:%M}"
+    if timezone:
+        return f"{suffix} {timezone}"
+    return suffix
+
+
+def _weekly_day_labels(byday: Sequence[str] | None, dtstart: datetime | None) -> list[str]:
+    resolved_days = list(byday) if byday else []
+    if not resolved_days and dtstart is not None:
+        resolved_days = [_weekday_for_dtstart(dtstart)]
+    if not resolved_days:
+        return []
+
+    day_labels = [
+        _WEEKDAY_LABELS.get(d.strip().upper(), d.strip().upper())
+        for d in resolved_days
+        if d.strip()
+    ]
+    return _unique_preserve_order(day_labels)
+
+
+def _describe_weekly(
+    *,
+    byday: Sequence[str] | None,
+    dtstart: datetime | None,
+    interval: int,
+    time_suffix: str,
+) -> str:
+    day_labels = _weekly_day_labels(byday, dtstart)
+    if not day_labels:
+        return "Weekly"
+
+    days_text = ", ".join(day_labels)
+    if interval == 1:
+        return f"Weekly on {days_text}{time_suffix}"
+    return f"Every {interval} weeks on {days_text}{time_suffix}"
+
+
+def _format_setpos_text(setpos_values: Sequence[str]) -> str | None:
+    setpos_ints: list[int] = []
+    for raw in setpos_values:
+        try:
+            setpos_ints.append(int(raw))
+        except ValueError:
+            continue
+
+    if not setpos_ints:
+        return None
+
+    setpos_ints = _unique_preserve_order(setpos_ints)
+    setpos_ints.sort(key=lambda p: (p == -1, p))
+
+    setpos_labels = [_SETPOS_LABELS.get(p, str(p)) for p in setpos_ints]
+    if len(setpos_labels) <= 2:
+        return " and ".join(setpos_labels)
+    return ", ".join(setpos_labels)
+
+
+def _monthly_values_with_defaults(
+    *,
+    parts: dict[str, list[str]],
+    dtstart: datetime | None,
+) -> tuple[list[str] | None, list[str] | None, list[str] | None]:
+    bymonthday_values = parts.get("BYMONTHDAY")
+    byday_values = parts.get("BYDAY")
+    bysetpos_values = parts.get("BYSETPOS")
+
+    if bymonthday_values is None and dtstart is not None:
+        bymonthday_values = [str(dtstart.day)]
+    if byday_values is None and dtstart is not None:
+        byday_values = [_weekday_for_dtstart(dtstart)]
+
+    return bymonthday_values, byday_values, bysetpos_values
+
+
+def _describe_monthly(
+    *,
+    parts: dict[str, list[str]],
+    dtstart: datetime | None,
+    interval: int,
+    time_suffix: str,
+) -> str:
+    bymonthday_values, byday_values, bysetpos_values = _monthly_values_with_defaults(
+        parts=parts,
+        dtstart=dtstart,
+    )
+
+    if bymonthday_values is not None and "BYSETPOS" not in parts:
+        day_num = bymonthday_values[0]
+        if interval == 1:
+            return f"Monthly on day {day_num}{time_suffix}"
+        return f"Every {interval} months on day {day_num}{time_suffix}"
+
+    if byday_values and bysetpos_values:
+        weekday = _WEEKDAY_LABELS.get(byday_values[0].upper(), byday_values[0].upper())
+        pos_text = _format_setpos_text(bysetpos_values)
+        if pos_text is None:
+            return "Monthly"
+        if interval == 1:
+            return f"Monthly on the {pos_text} {weekday}{time_suffix}"
+        return f"Every {interval} months on the {pos_text} {weekday}{time_suffix}"
+
+    return "Monthly"
+
+
 def describe_recurrence(
     *,
     rrule: str,
@@ -85,22 +204,12 @@ def describe_recurrence(
     parts = _parse_rrule_parts(rrule)
     freq = (parts.get("FREQ", [""])[0] or "").upper()
 
-    interval = 1
-    try:
-        interval = int(parts.get("INTERVAL", ["1"])[0])
-    except ValueError:
-        interval = 1
-    if interval < 1:
-        interval = 1
+    interval = _coerce_interval(parts)
 
     if dtstart is not None and dtstart.tzinfo is None:
         dtstart = dtstart.replace(tzinfo=UTC)
 
-    time_suffix = ""
-    if dtstart is not None:
-        time_suffix = f" at {dtstart:%H:%M}"
-        if timezone:
-            time_suffix = f"{time_suffix} {timezone}"
+    time_suffix = _time_suffix(dtstart, timezone)
 
     if freq == "DAILY":
         if interval == 1:
@@ -108,67 +217,20 @@ def describe_recurrence(
         return f"Every {interval} days{time_suffix}"
 
     if freq == "WEEKLY":
-        byday = parts.get("BYDAY")
-        if not byday and dtstart is not None:
-            byday = [_weekday_for_dtstart(dtstart)]
-        if not byday:
-            return "Weekly"
-
-        day_labels = [
-            _WEEKDAY_LABELS.get(d.strip().upper(), d.strip().upper()) for d in byday if d.strip()
-        ]
-        day_labels = _unique_preserve_order(day_labels)
-        days_text = ", ".join(day_labels)
-
-        if interval == 1:
-            return f"Weekly on {days_text}{time_suffix}"
-        return f"Every {interval} weeks on {days_text}{time_suffix}"
+        return _describe_weekly(
+            byday=parts.get("BYDAY"),
+            dtstart=dtstart,
+            interval=interval,
+            time_suffix=time_suffix,
+        )
 
     if freq == "MONTHLY":
-        bymonthday_values = parts.get("BYMONTHDAY")
-        byday_values = parts.get("BYDAY")
-        bysetpos_values = parts.get("BYSETPOS")
-
-        if bymonthday_values is None and dtstart is not None:
-            bymonthday_values = [str(dtstart.day)]
-
-        if byday_values is None and dtstart is not None:
-            byday_values = [_weekday_for_dtstart(dtstart)]
-
-        # Month-day style: BYMONTHDAY=15
-        if bymonthday_values is not None and "BYSETPOS" not in parts:
-            day_num = bymonthday_values[0]
-            if interval == 1:
-                return f"Monthly on day {day_num}{time_suffix}"
-            return f"Every {interval} months on day {day_num}{time_suffix}"
-
-        # Nth weekday style: BYDAY=TH;BYSETPOS=1,3
-        if byday_values and bysetpos_values:
-            weekday = _WEEKDAY_LABELS.get(byday_values[0].upper(), byday_values[0].upper())
-            setpos_ints: list[int] = []
-            for raw in bysetpos_values:
-                try:
-                    setpos_ints.append(int(raw))
-                except ValueError:
-                    continue
-
-            if not setpos_ints:
-                return "Monthly"
-
-            # Display in a stable, natural order (1,2,3,4,5,last)
-            setpos_ints = _unique_preserve_order(setpos_ints)
-            setpos_ints.sort(key=lambda p: (p == -1, p))
-
-            setpos_labels = [_SETPOS_LABELS.get(p, str(p)) for p in setpos_ints]
-            pos_text = (
-                " and ".join(setpos_labels) if len(setpos_labels) <= 2 else ", ".join(setpos_labels)
-            )
-
-            if interval == 1:
-                return f"Monthly on the {pos_text} {weekday}{time_suffix}"
-            return f"Every {interval} months on the {pos_text} {weekday}{time_suffix}"
-
-        return "Monthly"
+        return _describe_monthly(
+            parts=parts,
+            dtstart=dtstart,
+            interval=interval,
+            time_suffix=time_suffix,
+        )
 
     return "Custom recurrence"
 
@@ -207,43 +269,86 @@ def build_rrule(
     parts: list[str] = [f"FREQ={freq_norm}", f"INTERVAL={interval}"]
 
     if freq_norm == "WEEKLY":
-        raw_days = weekly_byday or []
-        days = [d.strip().upper() for d in raw_days if d.strip()]
-        if not days:
-            days = [_weekday_for_dtstart(dtstart)]
-        invalid = [d for d in days if d not in _WEEKDAYS]
-        if invalid:
-            raise ValueError("Invalid weekday")
-        parts.append(f"BYDAY={','.join(_unique_preserve_order(days))}")
+        parts.append(_build_weekly_byday_part(dtstart=dtstart, weekly_byday=weekly_byday))
 
     if freq_norm == "MONTHLY":
-        mode = monthly_mode.strip().lower()
-        if mode not in {"monthday", "nth_weekday"}:
-            raise ValueError("Invalid monthly mode")
-
-        if mode == "monthday":
-            bymonthday = monthly_bymonthday if monthly_bymonthday is not None else dtstart.day
-            if bymonthday < 1 or bymonthday > 31:
-                raise ValueError("Invalid day of month")
-            parts.append(f"BYMONTHDAY={bymonthday}")
-        else:
-            byday = (monthly_byday or "").strip().upper() or _weekday_for_dtstart(dtstart)
-            if byday not in _WEEKDAYS:
-                raise ValueError("Invalid weekday")
-
-            raw_setpos = list(monthly_bysetpos or [])
-            if not raw_setpos:
-                raw_setpos = [1]
-            setpos = _unique_preserve_order(raw_setpos)
-
-            allowed = {-1, 1, 2, 3, 4, 5}
-            if any(p not in allowed for p in setpos):
-                raise ValueError("Invalid set position")
-
-            parts.append(f"BYDAY={byday}")
-            parts.append(f"BYSETPOS={','.join(str(p) for p in setpos)}")
+        parts.extend(
+            _build_monthly_parts(
+                dtstart=dtstart,
+                monthly_mode=monthly_mode,
+                monthly_bymonthday=monthly_bymonthday,
+                monthly_byday=monthly_byday,
+                monthly_bysetpos=monthly_bysetpos,
+            )
+        )
 
     return ";".join(parts)
+
+
+def _build_weekly_byday_part(*, dtstart: datetime, weekly_byday: Sequence[str] | None) -> str:
+    raw_days = weekly_byday or []
+    days = [d.strip().upper() for d in raw_days if d.strip()]
+    if not days:
+        days = [_weekday_for_dtstart(dtstart)]
+
+    invalid = [d for d in days if d not in _WEEKDAYS]
+    if invalid:
+        raise ValueError("Invalid weekday")
+
+    return f"BYDAY={','.join(_unique_preserve_order(days))}"
+
+
+def _build_monthly_parts(
+    *,
+    dtstart: datetime,
+    monthly_mode: str,
+    monthly_bymonthday: int | None,
+    monthly_byday: str | None,
+    monthly_bysetpos: Sequence[int] | None,
+) -> list[str]:
+    mode = monthly_mode.strip().lower()
+    if mode not in {"monthday", "nth_weekday"}:
+        raise ValueError("Invalid monthly mode")
+
+    if mode == "monthday":
+        return [
+            _build_monthly_bymonthday_part(dtstart=dtstart, monthly_bymonthday=monthly_bymonthday)
+        ]
+
+    return _build_monthly_nth_weekday_parts(
+        dtstart=dtstart,
+        monthly_byday=monthly_byday,
+        monthly_bysetpos=monthly_bysetpos,
+    )
+
+
+def _build_monthly_bymonthday_part(*, dtstart: datetime, monthly_bymonthday: int | None) -> str:
+    bymonthday = monthly_bymonthday if monthly_bymonthday is not None else dtstart.day
+    if bymonthday < 1 or bymonthday > 31:
+        raise ValueError("Invalid day of month")
+    return f"BYMONTHDAY={bymonthday}"
+
+
+def _build_monthly_nth_weekday_parts(
+    *,
+    dtstart: datetime,
+    monthly_byday: str | None,
+    monthly_bysetpos: Sequence[int] | None,
+) -> list[str]:
+    byday = (monthly_byday or "").strip().upper() or _weekday_for_dtstart(dtstart)
+    if byday not in _WEEKDAYS:
+        raise ValueError("Invalid weekday")
+
+    raw_setpos = list(monthly_bysetpos or [])
+    if not raw_setpos:
+        raw_setpos = [1]
+    setpos = _unique_preserve_order(raw_setpos)
+
+    allowed = {-1, 1, 2, 3, 4, 5}
+    if any(p not in allowed for p in setpos):
+        raise ValueError("Invalid set position")
+
+    return [f"BYDAY={byday}", f"BYSETPOS={','.join(str(p) for p in setpos)}"]
 
 
 def generate_datetimes(*, rrule: str, dtstart: datetime, count: int) -> list[datetime]:
