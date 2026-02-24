@@ -1,6 +1,11 @@
 ## Agendable
 
 [![CI](https://github.com/radiation/agendable-v3/actions/workflows/ci.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/radiation/agendable-v3/actions/workflows/codeql.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/codeql.yml)
+[![Dependency Scan](https://github.com/radiation/agendable-v3/actions/workflows/dependency-scan.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/dependency-scan.yml)
+[![Semgrep](https://github.com/radiation/agendable-v3/actions/workflows/semgrep.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/semgrep.yml)
+[![Complexity](https://github.com/radiation/agendable-v3/actions/workflows/complexity.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/complexity.yml)
+[![Actionlint](https://github.com/radiation/agendable-v3/actions/workflows/actionlint.yml/badge.svg)](https://github.com/radiation/agendable-v3/actions/workflows/actionlint.yml)
 [![codecov](https://codecov.io/gh/radiation/agendable-v3/graph/badge.svg)](https://codecov.io/gh/radiation/agendable-v3)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-46aef7.svg)](https://github.com/astral-sh/ruff)
@@ -234,12 +239,40 @@ This repo includes CI at `.github/workflows/ci.yml` that runs on PRs and pushes 
 
 - `ruff check`
 - `mypy --strict src`
-- `pytest` with coverage report upload
+- `pytest` with coverage + JUnit test results upload
+
+Security scanning workflows:
+
+- `.github/workflows/codeql.yml`
+	- Runs GitHub CodeQL on PRs, pushes to `main`, and weekly.
+	- Surfaces findings in GitHub code scanning alerts / Security tab.
+- `.github/workflows/dependency-scan.yml`
+	- Exports locked dependencies from `uv.lock` and runs `pip-audit`.
+	- Runs on PRs, pushes to `main`, and weekly.
+	- Fails when known vulnerable package versions are detected.
+- `.github/workflows/semgrep.yml`
+	- Runs Semgrep (`p/default`) on PRs, pushes to `main`, and weekly.
+	- Complements CodeQL with additional security/correctness rules.
+	- Scope is tuned with `.semgrepignore` to avoid scanning generated/local artifacts.
+- `.github/workflows/complexity.yml`
+	- Runs Xenon complexity gates on PRs and pushes to `main`.
+	- Enforces thresholds: max-absolute `B`, max-modules `B`, max-average `A`.
+- `.github/workflows/actionlint.yml`
+	- Lints GitHub Actions workflow files on PRs and pushes to `main`.
+	- Catches workflow syntax/authoring issues before merge.
+
+Dependency automation:
+
+- `.github/dependabot.yml`
+	- Weekly updates for GitHub Actions and Python dependencies.
+	- Keeps SHA-pinned action references current via Dependabot PRs.
 
 Coverage is uploaded to Codecov using `.github/codecov.yml`, with ratcheting-style checks:
 
 - `codecov/project` target is `auto` (do not regress overall coverage)
 - `codecov/patch` target is `auto` (require new/changed code to maintain patch coverage)
+
+Test results are uploaded to Codecov via `codecov/test-results-action`, which provides pass/fail test visibility alongside coverage data.
 
 Recommended GitHub repo settings:
 
@@ -250,6 +283,14 @@ Recommended GitHub repo settings:
 4. Require Codecov checks for PRs:
 	- `codecov/project`
 	- `codecov/patch`
+5. Require security checks for PRs:
+	- `CodeQL Analyze`
+	- `pip-audit`
+6. Require additional quality checks for PRs:
+	- `Semgrep Scan`
+	- `Xenon Complexity Gate`
+	- `Actionlint`
+	- `Xenon Complexity Gate`
 
 For private repos, add `CODECOV_TOKEN` in GitHub Actions secrets if required by your Codecov setup.
 For this public repo, tokenless uploads should work, but adding `CODECOV_TOKEN` is also valid and supported by the workflow.

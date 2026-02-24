@@ -31,6 +31,61 @@ router = APIRouter()
 logger = logging.getLogger("agendable.series")
 
 
+def _validate_create_series_inputs(
+    *,
+    reminder_minutes_before: int,
+    generate_count: int,
+    recurrence_interval: int,
+) -> None:
+    if reminder_minutes_before < 0 or reminder_minutes_before > 60 * 24 * 30:
+        raise HTTPException(
+            status_code=400,
+            detail="reminder_minutes_before must be between 0 and 43200",
+        )
+
+    if generate_count < 1 or generate_count > 200:
+        raise HTTPException(status_code=400, detail="generate_count must be between 1 and 200")
+
+    if recurrence_interval < 1 or recurrence_interval > 365:
+        raise HTTPException(status_code=400, detail="recurrence_interval must be between 1 and 365")
+
+
+def _parse_monthly_bymonthday(monthly_bymonthday: str | None) -> int | None:
+    if monthly_bymonthday is None or not monthly_bymonthday.strip():
+        return None
+
+    try:
+        return int(monthly_bymonthday)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid monthly day") from exc
+
+
+def _build_normalized_rrule(
+    *,
+    recurrence_freq: str,
+    recurrence_interval: int,
+    dtstart: datetime,
+    weekly_byday: list[str],
+    monthly_mode: str,
+    monthly_bymonthday: int | None,
+    monthly_byday: str | None,
+    monthly_bysetpos: list[int],
+) -> str:
+    try:
+        return build_rrule(
+            freq=recurrence_freq,
+            interval=recurrence_interval,
+            dtstart=dtstart,
+            weekly_byday=weekly_byday,
+            monthly_mode=monthly_mode,
+            monthly_bymonthday=monthly_bymonthday,
+            monthly_byday=monthly_byday,
+            monthly_bysetpos=monthly_bysetpos,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid recurrence settings") from exc
+
+
 @router.get("/", response_class=Response)
 async def index(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
     try:
@@ -79,45 +134,29 @@ async def create_series(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    if reminder_minutes_before < 0 or reminder_minutes_before > 60 * 24 * 30:
-        raise HTTPException(
-            status_code=400,
-            detail="reminder_minutes_before must be between 0 and 43200",
-        )
-
-    if generate_count < 1 or generate_count > 200:
-        raise HTTPException(status_code=400, detail="generate_count must be between 1 and 200")
-
-    if recurrence_interval < 1 or recurrence_interval > 365:
-        raise HTTPException(status_code=400, detail="recurrence_interval must be between 1 and 365")
+    _validate_create_series_inputs(
+        reminder_minutes_before=reminder_minutes_before,
+        generate_count=generate_count,
+        recurrence_interval=recurrence_interval,
+    )
 
     start_date = parse_date(recurrence_start_date)
     start_time = parse_time(recurrence_time)
     tz = parse_timezone(recurrence_timezone)
     dtstart = datetime.combine(start_date, start_time).replace(tzinfo=tz)
 
-    bymonthday: int | None
-    if monthly_bymonthday is None or not monthly_bymonthday.strip():
-        bymonthday = None
-    else:
-        try:
-            bymonthday = int(monthly_bymonthday)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid monthly day") from exc
+    bymonthday = _parse_monthly_bymonthday(monthly_bymonthday)
 
-    try:
-        normalized_rrule = build_rrule(
-            freq=recurrence_freq,
-            interval=recurrence_interval,
-            dtstart=dtstart,
-            weekly_byday=weekly_byday,
-            monthly_mode=monthly_mode,
-            monthly_bymonthday=bymonthday,
-            monthly_byday=monthly_byday,
-            monthly_bysetpos=monthly_bysetpos,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid recurrence settings") from exc
+    normalized_rrule = _build_normalized_rrule(
+        recurrence_freq=recurrence_freq,
+        recurrence_interval=recurrence_interval,
+        dtstart=dtstart,
+        weekly_byday=weekly_byday,
+        monthly_mode=monthly_mode,
+        monthly_bymonthday=bymonthday,
+        monthly_byday=monthly_byday,
+        monthly_bysetpos=monthly_bysetpos,
+    )
 
     settings = get_settings()
     try:
@@ -150,7 +189,7 @@ async def create_series(
     return RedirectResponse(url="/", status_code=303)
 
 
-@router.get("/series/{series_id}", response_class=HTMLResponse)
+@router.get("/series/{series_id}", response_class=HTMLResponse, name="series_detail")
 async def series_detail(
     request: Request,
     series_id: uuid.UUID,
@@ -197,6 +236,7 @@ async def series_detail(
 
 @router.post("/series/{series_id}/occurrences", response_class=RedirectResponse)
 async def create_occurrence(
+    request: Request,
     series_id: uuid.UUID,
     scheduled_at: str = Form(...),
     session: AsyncSession = Depends(get_session),
@@ -234,4 +274,7 @@ async def create_occurrence(
         scheduled_at=occ.scheduled_at,
     )
 
-    return RedirectResponse(url=f"/series/{series_id}", status_code=303)
+    return RedirectResponse(
+        url=request.app.url_path_for("series_detail", series_id=str(series_id)),
+        status_code=303,
+    )

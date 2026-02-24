@@ -9,6 +9,7 @@ __pycache__/
 htmlcov/
 .coverage
 .coverage.*
+coverage.xml
 *.db
 *.sqlite
 .sqlite3
