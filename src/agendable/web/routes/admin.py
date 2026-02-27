@@ -14,6 +14,7 @@ from agendable.db import get_session
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.logging_config import log_with_fields
+from agendable.security_audit import audit_admin_denied, audit_admin_success
 from agendable.web.routes.common import templates
 
 router = APIRouter()
@@ -114,6 +115,13 @@ async def admin_update_user_role(
     try:
         new_role = UserRole(role.strip().lower())
     except ValueError:
+        audit_admin_denied(
+            event="user_role_update",
+            reason="invalid_role",
+            actor=current_user,
+            target_user_id=user_id,
+            requested_role=role,
+        )
         log_with_fields(
             logger,
             logging.WARNING,
@@ -125,6 +133,14 @@ async def admin_update_user_role(
         raise HTTPException(status_code=400, detail="Invalid role") from None
 
     if user.id == current_user.id and new_role != UserRole.admin:
+        audit_admin_denied(
+            event="user_role_update",
+            reason="self_demotion_blocked",
+            actor=current_user,
+            target_user_id=user.id,
+            previous_role=user.role.value,
+            requested_role=new_role.value,
+        )
         log_with_fields(
             logger,
             logging.WARNING,
@@ -144,6 +160,13 @@ async def admin_update_user_role(
     previous_role = user.role.value
     user.role = new_role
     await session.commit()
+    audit_admin_success(
+        event="user_role_update",
+        actor=current_user,
+        target_user_id=user.id,
+        previous_role=previous_role,
+        new_role=new_role.value,
+    )
     log_with_fields(
         logger,
         logging.INFO,
@@ -169,6 +192,14 @@ async def admin_update_user_active(
 
     new_is_active = _parse_bool(is_active)
     if user.id == current_user.id and not new_is_active:
+        audit_admin_denied(
+            event="user_active_update",
+            reason="self_deactivation_blocked",
+            actor=current_user,
+            target_user_id=user.id,
+            previous_is_active=user.is_active,
+            requested_is_active=new_is_active,
+        )
         log_with_fields(
             logger,
             logging.WARNING,
@@ -188,6 +219,13 @@ async def admin_update_user_active(
     previous_is_active = user.is_active
     user.is_active = new_is_active
     await session.commit()
+    audit_admin_success(
+        event="user_active_update",
+        actor=current_user,
+        target_user_id=user.id,
+        previous_is_active=previous_is_active,
+        new_is_active=new_is_active,
+    )
     log_with_fields(
         logger,
         logging.INFO,

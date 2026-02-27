@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 from httpx import AsyncClient
 
@@ -110,3 +112,50 @@ async def test_login_rate_limit_blocks_by_account_across_ips(
     assert first.status_code == 401
     assert second.status_code == 429
     assert "Too many login attempts" in second.text
+
+
+@pytest.mark.asyncio
+async def test_password_login_emits_audit_events(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="agendable.security.audit")
+
+    signup = await client.post(
+        "/signup",
+        data={
+            "first_name": "Audit",
+            "last_name": "Login",
+            "timezone": "UTC",
+            "email": "audit-login@example.com",
+            "password": "pw-right",
+        },
+        follow_redirects=True,
+    )
+    assert signup.status_code == 200
+    await client.post("/logout", follow_redirects=True)
+
+    failed = await client.post(
+        "/login",
+        data={"email": "audit-login@example.com", "password": "pw-wrong"},
+    )
+    assert failed.status_code == 401
+
+    success = await client.post(
+        "/login",
+        data={"email": "audit-login@example.com", "password": "pw-right"},
+        follow_redirects=False,
+    )
+    assert success.status_code == 303
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "audit_event=auth.password_login" in message
+        and "outcome=denied" in message
+        and "reason=invalid_credentials" in message
+        for message in messages
+    )
+    assert any(
+        "audit_event=auth.password_login" in message and "outcome=success" in message
+        for message in messages
+    )
