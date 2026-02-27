@@ -16,12 +16,13 @@ from agendable.db import get_session
 from agendable.db.models import ExternalIdentity, User
 from agendable.db.repos import ExternalIdentityRepository
 from agendable.logging_config import log_with_fields
-from agendable.rate_limit import RateLimitRule, consume_rate_limit
 from agendable.services.oidc_service import (
+    is_email_allowed_for_domain,
+    oidc_login_error_message,
     resolve_oidc_link_resolution,
     resolve_oidc_login_resolution,
 )
-from agendable.settings import Settings, get_settings
+from agendable.settings import get_settings
 from agendable.sso_oidc_flow import (
     OidcIdentityClaims,
     build_authorize_params,
@@ -32,96 +33,45 @@ from agendable.sso_oidc_flow import (
     set_oidc_link_user_id,
 )
 from agendable.web.routes import auth as auth_routes
+from agendable.web.routes.auth_rate_limits import (
+    is_identity_link_start_rate_limited,
+    is_oidc_callback_rate_limited,
+)
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
-_OIDC_ENABLED_ATTR = "oidc_enabled"
-_OIDC_CLIENT_ATTR = "_oidc_oauth_client"
 
 
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",", 1)[0].strip() or "unknown"
-    if request.client is not None and request.client.host:
-        return request.client.host
-    return "unknown"
-
-
-def _is_oidc_callback_rate_limited(
-    request: Request,
-    *,
-    settings: Settings,
-    account_key: str,
-) -> bool:
-    if not settings.auth_rate_limit_enabled:
-        return False
-
-    ip_limited = consume_rate_limit(
-        RateLimitRule(
-            bucket="oidc-callback-ip",
-            max_attempts=settings.oidc_callback_rate_limit_ip_attempts,
-            window_seconds=settings.oidc_callback_rate_limit_ip_window_seconds,
-        ),
-        _client_ip(request),
+def _auth_oidc_enabled() -> bool:
+    routes_mod = cast(Any, auth_routes)
+    enabled_fn = cast(
+        Callable[[], bool],
+        routes_mod._oidc_enabled
+        if hasattr(routes_mod, "_oidc_enabled")
+        else routes_mod.oidc_enabled,
     )
-    account_limited = consume_rate_limit(
-        RateLimitRule(
-            bucket="oidc-callback-account",
-            max_attempts=settings.oidc_callback_rate_limit_account_attempts,
-            window_seconds=settings.oidc_callback_rate_limit_account_window_seconds,
-        ),
-        account_key,
-    )
-    return ip_limited or account_limited
+    return enabled_fn()
 
 
-def _is_identity_link_start_rate_limited(
-    request: Request,
-    *,
-    user_id: uuid.UUID,
-) -> bool:
-    settings = get_settings()
-    if not settings.auth_rate_limit_enabled:
-        return False
-
-    ip_limited = consume_rate_limit(
-        RateLimitRule(
-            bucket="identity-link-start-ip",
-            max_attempts=settings.identity_link_start_rate_limit_ip_attempts,
-            window_seconds=settings.identity_link_start_rate_limit_ip_window_seconds,
-        ),
-        _client_ip(request),
+def _auth_oidc_oauth_client() -> Any:
+    routes_mod = cast(Any, auth_routes)
+    client_fn = cast(
+        Callable[[], Any],
+        routes_mod._oidc_oauth_client
+        if hasattr(routes_mod, "_oidc_oauth_client")
+        else routes_mod.oidc_oauth_client,
     )
-    account_limited = consume_rate_limit(
-        RateLimitRule(
-            bucket="identity-link-start-account",
-            max_attempts=settings.identity_link_start_rate_limit_account_attempts,
-            window_seconds=settings.identity_link_start_rate_limit_account_window_seconds,
-        ),
-        str(user_id),
-    )
-    return ip_limited or account_limited
+    return client_fn()
 
 
 def _login_redirect() -> RedirectResponse:
     return RedirectResponse(url="/login", status_code=303)
 
 
-def _oidc_enabled() -> bool:
-    enabled_fn = cast(Callable[[], bool], getattr(auth_routes, _OIDC_ENABLED_ATTR))
-    return enabled_fn()
-
-
-def _oidc_oauth_client() -> Any:
-    oidc_client_fn = cast(Callable[[], Any], getattr(auth_routes, _OIDC_CLIENT_ATTR))
-    return oidc_client_fn()
-
-
 @router.get("/auth/oidc/start", response_class=RedirectResponse)
 async def oidc_start(request: Request) -> Response:
     settings = get_settings()
-    if not _oidc_enabled():
+    if not _auth_oidc_enabled():
         if settings.oidc_debug_logging:
             logger.info("OIDC start aborted: provider is disabled")
         raise HTTPException(status_code=404)
@@ -134,7 +84,7 @@ async def oidc_start(request: Request) -> Response:
             "oidc start redirect initiated",
             redirect_uri=redirect_uri,
         )
-    oidc_client = _oidc_oauth_client()
+    oidc_client = _auth_oidc_oauth_client()
     authorize_params = build_authorize_params(settings.oidc_auth_prompt)
 
     return cast(
@@ -150,7 +100,7 @@ async def _resolve_link_user_or_redirect(
     link_user_id: uuid.UUID,
 ) -> User | RedirectResponse:
     try:
-        return await auth_routes._get_user_or_404(session, link_user_id)
+        return await auth_routes.get_user_or_404(session, link_user_id)
     except HTTPException:
         clear_oidc_link_user_id(request)
         return RedirectResponse(url="/login", status_code=303)
@@ -173,7 +123,7 @@ async def _render_link_error(
         return resolved
 
     clear_oidc_link_user_id(request)
-    return await auth_routes._render_profile_template(
+    return await auth_routes.render_profile_template(
         request,
         session=session,
         user=resolved,
@@ -226,7 +176,7 @@ async def _handle_link_callback(
                 requested_user_id=link_user.id,
                 existing_user_id=(ext.user_id if ext is not None else None),
             )
-        return await auth_routes._render_profile_template(
+        return await auth_routes.render_profile_template(
             request,
             session=session,
             user=link_user,
@@ -245,7 +195,7 @@ async def _handle_link_callback(
                 profile_email=link_user.email,
                 oidc_email=email,
             )
-        return await auth_routes._render_profile_template(
+        return await auth_routes.render_profile_template(
             request,
             session=session,
             user=link_user,
@@ -263,34 +213,6 @@ async def _handle_link_callback(
     return RedirectResponse(url="/profile", status_code=303)
 
 
-def _login_resolution_error_response(
-    request: Request,
-    *,
-    error: str | None,
-    email: str,
-    debug_oidc: bool,
-) -> Response | None:
-    if error == "inactive_user":
-        if debug_oidc:
-            logger.info("OIDC callback denied inactive user for email=%s", email)
-        return auth_routes._render_login_template(
-            request,
-            error="This account is deactivated. Contact an admin.",
-            status_code=403,
-        )
-
-    if error == "password_user_requires_link":
-        if debug_oidc:
-            logger.info("OIDC callback denied linking password-based account")
-        return auth_routes._render_login_template(
-            request,
-            error="An account with this email already exists. Sign in with password first to link SSO.",
-            status_code=403,
-        )
-
-    return None
-
-
 async def _handle_login_callback(
     request: Request,
     *,
@@ -306,7 +228,7 @@ async def _handle_login_callback(
         sub=sub,
         email=email,
         userinfo=userinfo,
-        is_bootstrap_admin_email=auth_routes._is_bootstrap_admin_email,
+        is_bootstrap_admin_email=auth_routes.is_bootstrap_admin_email,
     )
 
     if login_resolution.should_redirect_login:
@@ -314,14 +236,17 @@ async def _handle_login_callback(
             logger.info("OIDC callback identity points to missing user")
         return _login_redirect()
 
-    error_response = _login_resolution_error_response(
-        request,
-        error=login_resolution.error,
-        email=email,
-        debug_oidc=debug_oidc,
-    )
-    if error_response is not None:
-        return error_response
+    error_message = oidc_login_error_message(login_resolution.error)
+    if error_message is not None:
+        if debug_oidc and login_resolution.error == "inactive_user":
+            logger.info("OIDC callback denied inactive user for email=%s", email)
+        if debug_oidc and login_resolution.error == "password_user_requires_link":
+            logger.info("OIDC callback denied linking password-based account")
+        return auth_routes.render_login_template(
+            request,
+            error=error_message,
+            status_code=403,
+        )
 
     user = login_resolution.user
     if user is None:
@@ -344,7 +269,7 @@ async def _handle_login_callback(
             link_mode=link_user_id is not None,
         )
 
-    await auth_routes._maybe_promote_bootstrap_admin(user, session)
+    await auth_routes.maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/dashboard", status_code=303)
@@ -374,33 +299,6 @@ async def _exchange_token_or_error(
         return _login_redirect()
 
     return cast(dict[str, object], token)
-
-
-def _validate_domain_or_error(
-    request: Request,
-    *,
-    email: str,
-    allowed_email_domain: str | None,
-    debug_oidc: bool,
-) -> Response | None:
-    if allowed_email_domain is None:
-        return None
-
-    allowed = allowed_email_domain.strip().lower().lstrip("@")
-    if email.endswith(f"@{allowed}"):
-        return None
-
-    if debug_oidc:
-        logger.info(
-            "OIDC callback denied by allowed_email_domain: email=%s allowed_domain=%s",
-            email,
-            allowed,
-        )
-    return auth_routes._render_login_template(
-        request,
-        error="Email domain not allowed",
-        status_code=403,
-    )
 
 
 async def _parse_and_validate_claims_or_error(
@@ -459,12 +357,12 @@ async def oidc_callback(
     debug_oidc = settings.oidc_debug_logging
     link_user_id = get_oidc_link_user_id(request)
 
-    if not _oidc_enabled():
+    if not _auth_oidc_enabled():
         if debug_oidc:
             logger.info("OIDC callback aborted: provider is disabled")
         raise HTTPException(status_code=404)
 
-    oidc_client = _oidc_oauth_client()
+    oidc_client = _auth_oidc_oauth_client()
 
     token_or_response = await _exchange_token_or_error(
         request,
@@ -490,17 +388,23 @@ async def oidc_callback(
 
     sub, email, userinfo = claims_or_response
 
-    domain_error = _validate_domain_or_error(
-        request,
-        email=email,
-        allowed_email_domain=settings.allowed_email_domain,
-        debug_oidc=debug_oidc,
-    )
-    if domain_error is not None:
-        return domain_error
+    if not is_email_allowed_for_domain(email, settings.allowed_email_domain):
+        if debug_oidc:
+            allowed_value = settings.allowed_email_domain or ""
+            allowed = allowed_value.strip().lower().lstrip("@")
+            logger.info(
+                "OIDC callback denied by allowed_email_domain: email=%s allowed_domain=%s",
+                email,
+                allowed,
+            )
+        return auth_routes.render_login_template(
+            request,
+            error="Email domain not allowed",
+            status_code=403,
+        )
 
     account_key = str(link_user_id) if link_user_id is not None else email.strip().lower()
-    if _is_oidc_callback_rate_limited(request, settings=settings, account_key=account_key):
+    if is_oidc_callback_rate_limited(request, settings=settings, account_key=account_key):
         if link_user_id is not None:
             return await _render_link_error(
                 request,
@@ -509,7 +413,7 @@ async def oidc_callback(
                 message="Too many SSO attempts. Try again in a minute.",
                 status_code=429,
             )
-        return auth_routes._render_login_template(
+        return auth_routes.render_login_template(
             request,
             error="Too many SSO attempts. Try again in a minute.",
             status_code=429,
@@ -546,12 +450,12 @@ async def start_profile_identity_link(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> Response:
-    if not _oidc_enabled():
+    if not _auth_oidc_enabled():
         raise HTTPException(status_code=404)
 
-    user = await auth_routes._get_user_or_404(session, current_user.id)
-    if _is_identity_link_start_rate_limited(request, user_id=user.id):
-        return await auth_routes._render_profile_template(
+    user = await auth_routes.get_user_or_404(session, current_user.id)
+    if is_identity_link_start_rate_limited(request, user_id=user.id):
+        return await auth_routes.render_profile_template(
             request,
             session=session,
             user=user,
@@ -560,7 +464,7 @@ async def start_profile_identity_link(
         )
 
     if user.password_hash is not None and not verify_password(password, user.password_hash):
-        return await auth_routes._render_profile_template(
+        return await auth_routes.render_profile_template(
             request,
             session=session,
             user=user,
@@ -582,7 +486,7 @@ async def unlink_profile_identity(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> Response:
-    user = await auth_routes._get_user_or_404(session, current_user.id)
+    user = await auth_routes.get_user_or_404(session, current_user.id)
     ext_repo = ExternalIdentityRepository(session)
 
     identity = await ext_repo.get(identity_id)
@@ -591,7 +495,7 @@ async def unlink_profile_identity(
 
     identities = await ext_repo.list_by_user_id(user.id)
     if user.password_hash is None and len(identities) <= 1:
-        return await auth_routes._render_profile_template(
+        return await auth_routes.render_profile_template(
             request,
             session=session,
             user=user,
