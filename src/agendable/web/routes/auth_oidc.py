@@ -231,33 +231,25 @@ async def _handle_login_callback(
         is_bootstrap_admin_email=auth_routes.is_bootstrap_admin_email,
     )
 
-    if login_resolution.should_redirect_login:
-        if debug_oidc:
-            logger.info("OIDC callback identity points to missing user")
-        return _login_redirect()
+    user_or_response = await _resolve_login_user_or_response(
+        request,
+        session=session,
+        login_resolution=login_resolution,
+        email=email,
+        debug_oidc=debug_oidc,
+    )
+    if isinstance(user_or_response, Response):
+        return user_or_response
+    user = user_or_response
 
-    error_message = oidc_login_error_message(login_resolution.error)
-    if error_message is not None:
-        if debug_oidc and login_resolution.error == "inactive_user":
-            logger.info("OIDC callback denied inactive user for email=%s", email)
-        if debug_oidc and login_resolution.error == "password_user_requires_link":
-            logger.info("OIDC callback denied linking password-based account")
-        return auth_routes.render_login_template(
-            request,
-            error=error_message,
-            status_code=403,
-        )
-
-    user = login_resolution.user
-    if user is None:
-        return _login_redirect()
-
-    if login_resolution.create_identity:
-        if debug_oidc:
-            logger.info("OIDC callback linking or creating SSO identity for email=%s", email)
-        ext = ExternalIdentity(user_id=user.id, provider="oidc", subject=sub, email=email)
-        session.add(ext)
-        await session.commit()
+    await _create_login_identity_if_needed(
+        session=session,
+        user=user,
+        create_identity=login_resolution.create_identity,
+        sub=sub,
+        email=email,
+        debug_oidc=debug_oidc,
+    )
 
     if debug_oidc:
         log_with_fields(
@@ -273,6 +265,58 @@ async def _handle_login_callback(
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/dashboard", status_code=303)
+
+
+async def _resolve_login_user_or_response(
+    request: Request,
+    *,
+    session: AsyncSession,
+    login_resolution: object,
+    email: str,
+    debug_oidc: bool,
+) -> User | Response:
+    resolved = cast(Any, login_resolution)
+
+    if resolved.should_redirect_login:
+        if debug_oidc:
+            logger.info("OIDC callback identity points to missing user")
+        return _login_redirect()
+
+    error_message = oidc_login_error_message(resolved.error)
+    if error_message is not None:
+        if debug_oidc and resolved.error == "inactive_user":
+            logger.info("OIDC callback denied inactive user for email=%s", email)
+        if debug_oidc and resolved.error == "password_user_requires_link":
+            logger.info("OIDC callback denied linking password-based account")
+        return auth_routes.render_login_template(
+            request,
+            error=error_message,
+            status_code=403,
+        )
+
+    user = cast(User | None, resolved.user)
+    if user is None:
+        return _login_redirect()
+    return user
+
+
+async def _create_login_identity_if_needed(
+    *,
+    session: AsyncSession,
+    user: User,
+    create_identity: bool,
+    sub: str,
+    email: str,
+    debug_oidc: bool,
+) -> None:
+    if not create_identity:
+        return
+
+    if debug_oidc:
+        logger.info("OIDC callback linking or creating SSO identity for email=%s", email)
+    ext = ExternalIdentity(user_id=user.id, provider="oidc", subject=sub, email=email)
+    session.add(ext)
+    await session.commit()
 
 
 async def _exchange_token_or_error(
@@ -348,6 +392,91 @@ async def _parse_and_validate_claims_or_error(
     return _login_redirect()
 
 
+async def _extract_oidc_identity_or_response(
+    request: Request,
+    *,
+    oidc_client: Any,
+    debug_oidc: bool,
+    link_user_id: uuid.UUID | None,
+    session: AsyncSession,
+) -> tuple[str, str, Mapping[str, object]] | Response:
+    token_or_response = await _exchange_token_or_error(
+        request,
+        oidc_client=oidc_client,
+        debug_oidc=debug_oidc,
+        link_user_id=link_user_id,
+        session=session,
+    )
+    if isinstance(token_or_response, Response):
+        return token_or_response
+
+    claims_or_response = await _parse_and_validate_claims_or_error(
+        request,
+        oidc_client=oidc_client,
+        token=token_or_response,
+        debug_oidc=debug_oidc,
+        link_user_id=link_user_id,
+        session=session,
+    )
+    if isinstance(claims_or_response, Response):
+        return claims_or_response
+
+    return claims_or_response
+
+
+def _domain_block_response(
+    request: Request,
+    *,
+    email: str,
+    debug_oidc: bool,
+    allowed_email_domain: str | None,
+) -> Response | None:
+    if is_email_allowed_for_domain(email, allowed_email_domain):
+        return None
+
+    if debug_oidc:
+        allowed_value = allowed_email_domain or ""
+        allowed = allowed_value.strip().lower().lstrip("@")
+        logger.info(
+            "OIDC callback denied by allowed_email_domain: email=%s allowed_domain=%s",
+            email,
+            allowed,
+        )
+    return auth_routes.render_login_template(
+        request,
+        error="Email domain not allowed",
+        status_code=403,
+    )
+
+
+async def _rate_limit_block_response(
+    request: Request,
+    *,
+    settings: Any,
+    link_user_id: uuid.UUID | None,
+    email: str,
+    session: AsyncSession,
+) -> Response | None:
+    account_key = str(link_user_id) if link_user_id is not None else email.strip().lower()
+    if not is_oidc_callback_rate_limited(request, settings=settings, account_key=account_key):
+        return None
+
+    if link_user_id is not None:
+        return await _render_link_error(
+            request,
+            session=session,
+            link_user_id=link_user_id,
+            message="Too many SSO attempts. Try again in a minute.",
+            status_code=429,
+        )
+
+    return auth_routes.render_login_template(
+        request,
+        error="Too many SSO attempts. Try again in a minute.",
+        status_code=429,
+    )
+
+
 @router.get("/auth/oidc/callback", name="oidc_callback")
 async def oidc_callback(
     request: Request,
@@ -362,62 +491,36 @@ async def oidc_callback(
             logger.info("OIDC callback aborted: provider is disabled")
         raise HTTPException(status_code=404)
 
-    oidc_client = _auth_oidc_oauth_client()
-
-    token_or_response = await _exchange_token_or_error(
+    identity_or_response = await _extract_oidc_identity_or_response(
         request,
-        oidc_client=oidc_client,
+        oidc_client=_auth_oidc_oauth_client(),
         debug_oidc=debug_oidc,
         link_user_id=link_user_id,
         session=session,
     )
-    if isinstance(token_or_response, Response):
-        return token_or_response
-    token = token_or_response
+    if isinstance(identity_or_response, Response):
+        return identity_or_response
 
-    claims_or_response = await _parse_and_validate_claims_or_error(
+    sub, email, userinfo = identity_or_response
+
+    domain_error = _domain_block_response(
         request,
-        oidc_client=oidc_client,
-        token=token,
+        email=email,
         debug_oidc=debug_oidc,
+        allowed_email_domain=settings.allowed_email_domain,
+    )
+    if domain_error is not None:
+        return domain_error
+
+    rate_limit_error = await _rate_limit_block_response(
+        request,
+        settings=settings,
         link_user_id=link_user_id,
+        email=email,
         session=session,
     )
-    if isinstance(claims_or_response, Response):
-        return claims_or_response
-
-    sub, email, userinfo = claims_or_response
-
-    if not is_email_allowed_for_domain(email, settings.allowed_email_domain):
-        if debug_oidc:
-            allowed_value = settings.allowed_email_domain or ""
-            allowed = allowed_value.strip().lower().lstrip("@")
-            logger.info(
-                "OIDC callback denied by allowed_email_domain: email=%s allowed_domain=%s",
-                email,
-                allowed,
-            )
-        return auth_routes.render_login_template(
-            request,
-            error="Email domain not allowed",
-            status_code=403,
-        )
-
-    account_key = str(link_user_id) if link_user_id is not None else email.strip().lower()
-    if is_oidc_callback_rate_limited(request, settings=settings, account_key=account_key):
-        if link_user_id is not None:
-            return await _render_link_error(
-                request,
-                session=session,
-                link_user_id=link_user_id,
-                message="Too many SSO attempts. Try again in a minute.",
-                status_code=429,
-            )
-        return auth_routes.render_login_template(
-            request,
-            error="Too many SSO attempts. Try again in a minute.",
-            status_code=429,
-        )
+    if rate_limit_error is not None:
+        return rate_limit_error
 
     if link_user_id is not None:
         return await _handle_link_callback(
