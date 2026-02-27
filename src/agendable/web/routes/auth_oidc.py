@@ -43,6 +43,38 @@ router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 
 
+def _audit_callback_denied(
+    *,
+    reason: str,
+    actor_email: str | None = None,
+    link_mode: bool | None = None,
+) -> None:
+    if link_mode is None:
+        audit_oidc_denied(event="callback", reason=reason, actor_email=actor_email)
+        return
+
+    audit_oidc_denied(
+        event="callback",
+        reason=reason,
+        actor_email=actor_email,
+        link_mode=link_mode,
+    )
+
+
+def _audit_identity_link_start(
+    *,
+    outcome: str,
+    actor: User,
+    reason: str | None = None,
+) -> None:
+    if outcome == "denied":
+        if reason is None:
+            raise ValueError("reason is required for denied identity link start events")
+        audit_oidc_denied(event="identity_link_start", reason=reason, actor=actor)
+        return
+    audit_oidc_success(event="identity_link_start", actor=actor)
+
+
 def _auth_oidc_enabled() -> bool:
     routes_mod = cast(Any, auth_routes)
     enabled_fn = cast(
@@ -357,11 +389,7 @@ async def _exchange_token_or_error(
     try:
         token = await oidc_client.authorize_access_token(request)
     except OAuthError:
-        audit_oidc_denied(
-            event="callback",
-            reason="oauth_error",
-            link_mode=link_user_id is not None,
-        )
+        _audit_callback_denied(reason="oauth_error", link_mode=link_user_id is not None)
         if debug_oidc:
             logger.info("OIDC callback OAuthError during token/id token exchange")
         if link_user_id is not None:
@@ -413,8 +441,7 @@ async def _parse_and_validate_claims_or_error(
             bool(email),
             email_verified,
         )
-    audit_oidc_denied(
-        event="callback",
+    _audit_callback_denied(
         reason="missing_required_claims",
         actor_email=email,
         link_mode=link_user_id is not None,
@@ -480,11 +507,7 @@ def _domain_block_response(
             email,
             allowed,
         )
-    audit_oidc_denied(
-        event="callback",
-        reason="domain_not_allowed",
-        actor_email=email,
-    )
+    _audit_callback_denied(reason="domain_not_allowed", actor_email=email)
     return auth_routes.render_login_template(
         request,
         error="Email domain not allowed",
@@ -504,8 +527,7 @@ async def _rate_limit_block_response(
     if not is_oidc_callback_rate_limited(request, settings=settings, account_key=account_key):
         return None
 
-    audit_oidc_denied(
-        event="callback",
+    _audit_callback_denied(
         reason="rate_limited",
         actor_email=email,
         link_mode=link_user_id is not None,
@@ -537,10 +559,7 @@ async def oidc_callback(
     link_user_id = get_oidc_link_user_id(request)
 
     if not _auth_oidc_enabled():
-        audit_oidc_denied(
-            event="callback",
-            reason="provider_disabled",
-        )
+        _audit_callback_denied(reason="provider_disabled")
         if debug_oidc:
             logger.info("OIDC callback aborted: provider is disabled")
         raise HTTPException(status_code=404)
@@ -608,20 +627,16 @@ async def start_profile_identity_link(
     current_user: User = Depends(require_user),
 ) -> Response:
     if not _auth_oidc_enabled():
-        audit_oidc_denied(
-            event="identity_link_start",
-            reason="provider_disabled",
+        _audit_identity_link_start(
+            outcome="denied",
             actor=current_user,
+            reason="provider_disabled",
         )
         raise HTTPException(status_code=404)
 
     user = await auth_routes.get_user_or_404(session, current_user.id)
     if is_identity_link_start_rate_limited(request, user_id=user.id):
-        audit_oidc_denied(
-            event="identity_link_start",
-            reason="rate_limited",
-            actor=user,
-        )
+        _audit_identity_link_start(outcome="denied", actor=user, reason="rate_limited")
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -631,11 +646,7 @@ async def start_profile_identity_link(
         )
 
     if user.password_hash is not None and not verify_password(password, user.password_hash):
-        audit_oidc_denied(
-            event="identity_link_start",
-            reason="invalid_password",
-            actor=user,
-        )
+        _audit_identity_link_start(outcome="denied", actor=user, reason="invalid_password")
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -645,10 +656,7 @@ async def start_profile_identity_link(
         )
 
     set_oidc_link_user_id(request, user.id)
-    audit_oidc_success(
-        event="identity_link_start",
-        actor=user,
-    )
+    _audit_identity_link_start(outcome="success", actor=user)
     return RedirectResponse(url="/auth/oidc/start", status_code=303)
 
 
