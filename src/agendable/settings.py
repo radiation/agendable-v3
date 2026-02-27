@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
     log_http_requests: bool = True
+    trust_proxy_headers: bool = False
 
     # For local development
     auto_create_db: bool = False
@@ -30,6 +31,21 @@ class Settings(BaseSettings):
     session_cookie_same_site: Literal["lax", "strict", "none"] = "lax"
     session_cookie_https_only: bool = False
     session_cookie_max_age_seconds: int = Field(default=60 * 60 * 24 * 14, ge=60)
+
+    # Auth and identity-linking rate limits
+    auth_rate_limit_enabled: bool = True
+    login_rate_limit_ip_attempts: int = Field(default=10, ge=1)
+    login_rate_limit_ip_window_seconds: int = Field(default=60, ge=1)
+    login_rate_limit_account_attempts: int = Field(default=5, ge=1)
+    login_rate_limit_account_window_seconds: int = Field(default=60, ge=1)
+    oidc_callback_rate_limit_ip_attempts: int = Field(default=20, ge=1)
+    oidc_callback_rate_limit_ip_window_seconds: int = Field(default=60, ge=1)
+    oidc_callback_rate_limit_account_attempts: int = Field(default=10, ge=1)
+    oidc_callback_rate_limit_account_window_seconds: int = Field(default=60, ge=1)
+    identity_link_start_rate_limit_ip_attempts: int = Field(default=10, ge=1)
+    identity_link_start_rate_limit_ip_window_seconds: int = Field(default=60, ge=1)
+    identity_link_start_rate_limit_account_attempts: int = Field(default=5, ge=1)
+    identity_link_start_rate_limit_account_window_seconds: int = Field(default=60, ge=1)
 
     # Reminder integrations (optional for now)
     slack_webhook_url: SecretStr | None = None

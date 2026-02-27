@@ -223,3 +223,35 @@ async def test_profile_link_callback_handles_deleted_linking_user(
     callback = await client.get("/auth/oidc/callback", follow_redirects=False)
     assert callback.status_code == 303
     assert callback.headers["location"] == "/login"
+
+
+@pytest.mark.asyncio
+async def test_profile_link_start_rate_limit_blocks_repeated_attempts(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    enable_oidc_env(monkeypatch)
+    monkeypatch.setenv("AGENDABLE_IDENTITY_LINK_START_RATE_LIMIT_IP_ATTEMPTS", "99")
+    monkeypatch.setenv("AGENDABLE_IDENTITY_LINK_START_RATE_LIMIT_ACCOUNT_ATTEMPTS", "1")
+
+    await signup_and_login(
+        client,
+        first_name="Rate",
+        last_name="Link",
+        email="rate-link-start@example.com",
+    )
+
+    first = await client.post(
+        "/profile/identities/link/start",
+        data={"password": "pw123456"},
+        follow_redirects=False,
+    )
+    second = await client.post(
+        "/profile/identities/link/start",
+        data={"password": "pw123456"},
+        follow_redirects=False,
+    )
+
+    assert first.status_code == 303
+    assert second.status_code == 429
+    assert "Too many link attempts" in second.text

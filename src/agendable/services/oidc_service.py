@@ -26,6 +26,22 @@ class OidcLoginResolution:
     should_redirect_login: bool = False
 
 
+def oidc_login_error_message(error: str | None) -> str | None:
+    if error == "inactive_user":
+        return "This account is deactivated. Contact an admin."
+    if error == "password_user_requires_link":
+        return "An account with this email already exists. Sign in with password first to link SSO."
+    return None
+
+
+def is_email_allowed_for_domain(email: str, allowed_email_domain: str | None) -> bool:
+    if allowed_email_domain is None:
+        return True
+
+    allowed = allowed_email_domain.strip().lower().lstrip("@")
+    return email.endswith(f"@{allowed}")
+
+
 async def provision_user_for_oidc(
     session: AsyncSession,
     *,

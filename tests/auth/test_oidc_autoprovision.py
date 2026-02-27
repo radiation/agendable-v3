@@ -225,3 +225,76 @@ async def test_oidc_autoprovision_name_fallback_uses_email_localpart(
     assert user.first_name == "charlie"
     assert user.last_name == ""
     assert user.display_name == "charlie"
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_rate_limit_blocks_repeated_attempts(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv(
+        "AGENDABLE_OIDC_METADATA_URL", "https://example.com/.well-known/openid-configuration"
+    )
+    monkeypatch.setenv("AGENDABLE_OIDC_CALLBACK_RATE_LIMIT_IP_ATTEMPTS", "1")
+    monkeypatch.setenv("AGENDABLE_OIDC_CALLBACK_RATE_LIMIT_ACCOUNT_ATTEMPTS", "99")
+    monkeypatch.setattr(
+        auth_routes,
+        "_oidc_oauth_client",
+        lambda: _FakeOidcClient(
+            {
+                "sub": "sub-rate-oidc",
+                "email": "rate-oidc@example.com",
+                "email_verified": True,
+            }
+        ),
+    )
+
+    first = await client.get("/auth/oidc/callback", follow_redirects=False)
+    second = await client.get("/auth/oidc/callback", follow_redirects=False)
+
+    assert first.status_code == 303
+    assert second.status_code == 429
+    assert "Too many SSO attempts" in second.text
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_denies_disallowed_email_domain(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
+    monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
+    monkeypatch.setenv(
+        "AGENDABLE_OIDC_METADATA_URL", "https://example.com/.well-known/openid-configuration"
+    )
+    monkeypatch.setenv("AGENDABLE_ALLOWED_EMAIL_DOMAIN", "example.com")
+    monkeypatch.setenv("AGENDABLE_OIDC_DEBUG_LOGGING", "true")
+    monkeypatch.setattr(
+        auth_routes,
+        "_oidc_oauth_client",
+        lambda: _FakeOidcClient(
+            {
+                "sub": "sub-domain-denied",
+                "email": "not-allowed@other.com",
+                "email_verified": True,
+            }
+        ),
+    )
+
+    response = await client.get("/auth/oidc/callback", follow_redirects=False)
+
+    assert response.status_code == 403
+    assert "Email domain not allowed" in response.text
+
+
+@pytest.mark.asyncio
+async def test_oidc_callback_returns_404_when_provider_disabled(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_routes, "oidc_enabled", lambda: False)
+
+    response = await client.get("/auth/oidc/callback", follow_redirects=False)
+    assert response.status_code == 404

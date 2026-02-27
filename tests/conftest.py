@@ -15,6 +15,12 @@ from sqlalchemy.ext.asyncio import (
 import agendable.db as db
 from agendable.app import create_app
 from agendable.db.models import Base
+from agendable.rate_limit import reset_rate_limit_state
+
+
+@pytest.fixture(autouse=True)
+def reset_in_memory_rate_limits() -> None:
+    reset_rate_limit_state()
 
 
 @pytest.fixture

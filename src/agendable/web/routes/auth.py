@@ -16,30 +16,31 @@ from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.settings import get_settings
 from agendable.sso_oidc import oidc_enabled
 from agendable.web.routes.auth_oidc import router as auth_oidc_router
+from agendable.web.routes.auth_rate_limits import is_login_rate_limited, record_login_failure
 from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 
 
-def _is_bootstrap_admin_email(email: str) -> bool:
+def is_bootstrap_admin_email(email: str) -> bool:
     configured = get_settings().bootstrap_admin_email
     if configured is None:
         return False
     return configured.strip().lower() == email.strip().lower()
 
 
-async def _maybe_promote_bootstrap_admin(user: User, session: AsyncSession) -> None:
+async def maybe_promote_bootstrap_admin(user: User, session: AsyncSession) -> None:
     if user.role == UserRole.admin:
         return
-    if not _is_bootstrap_admin_email(user.email):
+    if not is_bootstrap_admin_email(user.email):
         return
 
     user.role = UserRole.admin
     await session.commit()
 
 
-def _render_login_template(
+def render_login_template(
     request: Request,
     *,
     error: str | None,
@@ -102,7 +103,7 @@ async def _redirect_if_authenticated(
         return None
 
 
-async def _get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
+async def get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
     users = UserRepository(session)
     user = await users.get_by_id(user_id)
     if user is None:
@@ -114,7 +115,11 @@ def _oidc_oauth_client() -> Any:
     return cast(Any, oauth).oidc
 
 
-async def _render_profile_template(
+def oidc_oauth_client() -> Any:
+    return _oidc_oauth_client()
+
+
+async def render_profile_template(
     request: Request,
     *,
     session: AsyncSession,
@@ -138,13 +143,20 @@ async def _render_profile_template(
     )
 
 
+_is_bootstrap_admin_email = is_bootstrap_admin_email
+_maybe_promote_bootstrap_admin = maybe_promote_bootstrap_admin
+_render_login_template = render_login_template
+_get_user_or_404 = get_user_or_404
+_render_profile_template = render_profile_template
+
+
 @router.get("/login", response_class=Response)
 async def login_form(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
     redirect_response = await _redirect_if_authenticated(request, session)
     if redirect_response is not None:
         return redirect_response
 
-    return _render_login_template(request, error=None)
+    return render_login_template(request, error=None)
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -156,31 +168,41 @@ async def login(
 ) -> Response:
     normalized_email = email.strip().lower()
 
+    if is_login_rate_limited(request, normalized_email):
+        return render_login_template(
+            request,
+            error="Too many login attempts. Try again in a minute.",
+            status_code=429,
+        )
+
     users = UserRepository(session)
     user = await users.get_by_email(normalized_email)
 
     if user is None:
-        return _render_login_template(
+        record_login_failure(request, normalized_email)
+        return render_login_template(
             request,
             error="Account not found. Create one first.",
             status_code=401,
         )
 
     if not user.is_active:
-        return _render_login_template(
+        record_login_failure(request, normalized_email)
+        return render_login_template(
             request,
             error="This account is deactivated. Contact an admin.",
             status_code=403,
         )
 
     if user.password_hash is None or not verify_password(password, user.password_hash):
-        return _render_login_template(
+        record_login_failure(request, normalized_email)
+        return render_login_template(
             request,
             error="Invalid email or password",
             status_code=401,
         )
 
-    await _maybe_promote_bootstrap_admin(user, session)
+    await maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
     return RedirectResponse(url="/dashboard", status_code=303)
@@ -236,7 +258,7 @@ async def signup(
         last_name=normalized_last_name,
         timezone=normalized_timezone,
         display_name=f"{normalized_first_name} {normalized_last_name}".strip(),
-        role=(UserRole.admin if _is_bootstrap_admin_email(normalized_email) else UserRole.user),
+        role=(UserRole.admin if is_bootstrap_admin_email(normalized_email) else UserRole.user),
         password_hash=hash_password(password),
     )
     session.add(user)
@@ -259,10 +281,10 @@ async def profile(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    user = await _get_user_or_404(session, current_user.id)
+    user = await get_user_or_404(session, current_user.id)
     return cast(
         HTMLResponse,
-        await _render_profile_template(
+        await render_profile_template(
             request,
             session=session,
             user=user,
@@ -281,7 +303,7 @@ async def update_profile(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    user = await _get_user_or_404(session, current_user.id)
+    user = await get_user_or_404(session, current_user.id)
 
     normalized_first_name = first_name.strip()
     normalized_last_name = last_name.strip()
