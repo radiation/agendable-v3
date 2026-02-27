@@ -13,6 +13,7 @@ from agendable.auth import hash_password, require_user, verify_password
 from agendable.db import get_session
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
+from agendable.rate_limit import RateLimitRule, consume_rate_limit
 from agendable.settings import get_settings
 from agendable.sso_oidc import oidc_enabled
 from agendable.web.routes.auth_oidc import router as auth_oidc_router
@@ -20,6 +21,39 @@ from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip() or "unknown"
+    if request.client is not None and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _is_login_rate_limited(request: Request, email: str) -> bool:
+    settings = get_settings()
+    if not settings.auth_rate_limit_enabled:
+        return False
+
+    ip_limited = consume_rate_limit(
+        RateLimitRule(
+            bucket="login-ip",
+            max_attempts=settings.login_rate_limit_ip_attempts,
+            window_seconds=settings.login_rate_limit_ip_window_seconds,
+        ),
+        _client_ip(request),
+    )
+    account_limited = consume_rate_limit(
+        RateLimitRule(
+            bucket="login-account",
+            max_attempts=settings.login_rate_limit_account_attempts,
+            window_seconds=settings.login_rate_limit_account_window_seconds,
+        ),
+        email,
+    )
+    return ip_limited or account_limited
 
 
 def _is_bootstrap_admin_email(email: str) -> bool:
@@ -155,6 +189,13 @@ async def login(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     normalized_email = email.strip().lower()
+
+    if _is_login_rate_limited(request, normalized_email):
+        return _render_login_template(
+            request,
+            error="Too many login attempts. Try again in a minute.",
+            status_code=429,
+        )
 
     users = UserRepository(session)
     user = await users.get_by_email(normalized_email)
