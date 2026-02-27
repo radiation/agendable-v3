@@ -15,7 +15,7 @@ from agendable.auth import require_user, verify_password
 from agendable.db import get_session
 from agendable.db.models import ExternalIdentity, User
 from agendable.db.repos import ExternalIdentityRepository
-from agendable.logging_config import log_with_fields
+from agendable.logging_config import log_security_audit_event, log_with_fields
 from agendable.services.oidc_service import (
     is_email_allowed_for_domain,
     oidc_login_error_message,
@@ -40,6 +40,57 @@ from agendable.web.routes.auth_rate_limits import (
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
+
+
+def _audit_oidc_denied(
+    *,
+    event: str,
+    reason: str,
+    **fields: object,
+) -> None:
+    log_security_audit_event(
+        audit_event=f"auth.oidc.{event}",
+        outcome="denied",
+        audit_level=logging.WARNING,
+        reason=reason,
+        **fields,
+    )
+
+
+def _audit_oidc_success(
+    *,
+    event: str,
+    **fields: object,
+) -> None:
+    log_security_audit_event(
+        audit_event=f"auth.oidc.{event}",
+        outcome="success",
+        **fields,
+    )
+
+
+def _with_actor_fields(
+    *,
+    actor: User | None = None,
+    actor_user_id: object | None = None,
+    actor_email: str | None = None,
+    **fields: object,
+) -> dict[str, object]:
+    normalized_fields = dict(fields)
+    resolved_user_id: object | None = actor_user_id
+    resolved_email: str | None = actor_email
+
+    if actor is not None:
+        if resolved_user_id is None:
+            resolved_user_id = actor.id
+        if resolved_email is None:
+            resolved_email = actor.email
+
+    if resolved_user_id is not None:
+        normalized_fields["actor_user_id"] = resolved_user_id
+    if resolved_email is not None:
+        normalized_fields["actor_email"] = resolved_email
+    return normalized_fields
 
 
 def _auth_oidc_enabled() -> bool:
@@ -167,6 +218,14 @@ async def _handle_link_callback(
     if link_resolution.error == "already_linked_other_user":
         ext = await ext_repo.get_by_provider_subject("oidc", sub)
         clear_oidc_link_user_id(request)
+        _audit_oidc_denied(
+            event="identity_link",
+            reason="already_linked_other_user",
+            **_with_actor_fields(
+                actor=link_user,
+                target_user_id=(ext.user_id if ext is not None else None),
+            ),
+        )
         if debug_oidc:
             log_with_fields(
                 logger,
@@ -186,6 +245,11 @@ async def _handle_link_callback(
 
     if link_resolution.error == "email_mismatch":
         clear_oidc_link_user_id(request)
+        _audit_oidc_denied(
+            event="identity_link",
+            reason="email_mismatch",
+            **_with_actor_fields(actor=link_user, oidc_email=email),
+        )
         if debug_oidc:
             log_with_fields(
                 logger,
@@ -210,6 +274,10 @@ async def _handle_link_callback(
 
     clear_oidc_link_user_id(request)
     request.session["user_id"] = str(link_user.id)
+    _audit_oidc_success(
+        event="identity_link",
+        **_with_actor_fields(actor=link_user),
+    )
     return RedirectResponse(url="/profile", status_code=303)
 
 
@@ -264,6 +332,10 @@ async def _handle_login_callback(
     await auth_routes.maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
+    _audit_oidc_success(
+        event="callback_login",
+        **_with_actor_fields(actor=user, link_mode=link_user_id is not None),
+    )
     return RedirectResponse(url="/dashboard", status_code=303)
 
 
@@ -284,6 +356,11 @@ async def _resolve_login_user_or_response(
 
     error_message = oidc_login_error_message(resolved.error)
     if error_message is not None:
+        _audit_oidc_denied(
+            event="callback_login",
+            reason=resolved.error,
+            **_with_actor_fields(actor_email=email),
+        )
         if debug_oidc and resolved.error == "inactive_user":
             logger.info("OIDC callback denied inactive user for email=%s", email)
         if debug_oidc and resolved.error == "password_user_requires_link":
@@ -330,6 +407,11 @@ async def _exchange_token_or_error(
     try:
         token = await oidc_client.authorize_access_token(request)
     except OAuthError:
+        _audit_oidc_denied(
+            event="callback",
+            reason="oauth_error",
+            link_mode=link_user_id is not None,
+        )
         if debug_oidc:
             logger.info("OIDC callback OAuthError during token/id token exchange")
         if link_user_id is not None:
@@ -381,6 +463,12 @@ async def _parse_and_validate_claims_or_error(
             bool(email),
             email_verified,
         )
+    _audit_oidc_denied(
+        event="callback",
+        reason="missing_required_claims",
+        **_with_actor_fields(actor_email=email),
+        link_mode=link_user_id is not None,
+    )
     if link_user_id is not None:
         return await _render_link_error(
             request,
@@ -442,6 +530,11 @@ def _domain_block_response(
             email,
             allowed,
         )
+    _audit_oidc_denied(
+        event="callback",
+        reason="domain_not_allowed",
+        **_with_actor_fields(actor_email=email),
+    )
     return auth_routes.render_login_template(
         request,
         error="Email domain not allowed",
@@ -460,6 +553,13 @@ async def _rate_limit_block_response(
     account_key = str(link_user_id) if link_user_id is not None else email.strip().lower()
     if not is_oidc_callback_rate_limited(request, settings=settings, account_key=account_key):
         return None
+
+    _audit_oidc_denied(
+        event="callback",
+        reason="rate_limited",
+        **_with_actor_fields(actor_email=email),
+        link_mode=link_user_id is not None,
+    )
 
     if link_user_id is not None:
         return await _render_link_error(
@@ -487,6 +587,10 @@ async def oidc_callback(
     link_user_id = get_oidc_link_user_id(request)
 
     if not _auth_oidc_enabled():
+        _audit_oidc_denied(
+            event="callback",
+            reason="provider_disabled",
+        )
         if debug_oidc:
             logger.info("OIDC callback aborted: provider is disabled")
         raise HTTPException(status_code=404)
@@ -554,10 +658,20 @@ async def start_profile_identity_link(
     current_user: User = Depends(require_user),
 ) -> Response:
     if not _auth_oidc_enabled():
+        _audit_oidc_denied(
+            event="identity_link_start",
+            reason="provider_disabled",
+            **_with_actor_fields(actor=current_user),
+        )
         raise HTTPException(status_code=404)
 
     user = await auth_routes.get_user_or_404(session, current_user.id)
     if is_identity_link_start_rate_limited(request, user_id=user.id):
+        _audit_oidc_denied(
+            event="identity_link_start",
+            reason="rate_limited",
+            **_with_actor_fields(actor=user),
+        )
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -567,6 +681,11 @@ async def start_profile_identity_link(
         )
 
     if user.password_hash is not None and not verify_password(password, user.password_hash):
+        _audit_oidc_denied(
+            event="identity_link_start",
+            reason="invalid_password",
+            **_with_actor_fields(actor=user),
+        )
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -576,6 +695,10 @@ async def start_profile_identity_link(
         )
 
     set_oidc_link_user_id(request, user.id)
+    _audit_oidc_success(
+        event="identity_link_start",
+        **_with_actor_fields(actor=user),
+    )
     return RedirectResponse(url="/auth/oidc/start", status_code=303)
 
 
@@ -594,10 +717,20 @@ async def unlink_profile_identity(
 
     identity = await ext_repo.get(identity_id)
     if identity is None or identity.user_id != user.id:
+        _audit_oidc_denied(
+            event="identity_unlink",
+            reason="identity_not_found",
+            **_with_actor_fields(actor=user, target_identity_id=identity_id),
+        )
         raise HTTPException(status_code=404)
 
     identities = await ext_repo.list_by_user_id(user.id)
     if user.password_hash is None and len(identities) <= 1:
+        _audit_oidc_denied(
+            event="identity_unlink",
+            reason="only_sign_in_method",
+            **_with_actor_fields(actor=user, target_identity_id=identity.id),
+        )
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -608,4 +741,8 @@ async def unlink_profile_identity(
 
     await ext_repo.delete(identity, flush=False)
     await session.commit()
+    _audit_oidc_success(
+        event="identity_unlink",
+        **_with_actor_fields(actor=user, target_identity_id=identity.id),
+    )
     return RedirectResponse(url="/profile", status_code=303)

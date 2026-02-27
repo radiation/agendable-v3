@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 import pytest
@@ -17,8 +18,12 @@ from tests.auth.admin_test_helpers import (
 
 @pytest.mark.asyncio
 async def test_admin_can_update_role_and_active_status(
-    client: AsyncClient, db_session: AsyncSession
+    client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="agendable.security.audit")
+
     signup = await client.post(
         "/signup",
         data={
@@ -80,6 +85,22 @@ async def test_admin_can_update_role_and_active_status(
     )
     assert self_deactivate.status_code == 400
     assert "You cannot deactivate your own account." in self_deactivate.text
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "audit_event=admin.user_role_update" in message and "outcome=success" in message
+        for message in messages
+    )
+    assert any(
+        "audit_event=admin.user_active_update" in message and "outcome=success" in message
+        for message in messages
+    )
+    assert any(
+        "audit_event=admin.user_active_update" in message
+        and "outcome=denied" in message
+        and "reason=self_deactivation_blocked" in message
+        for message in messages
+    )
 
 
 @pytest.mark.asyncio

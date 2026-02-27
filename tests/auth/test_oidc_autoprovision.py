@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import pytest
@@ -30,7 +31,10 @@ async def test_oidc_callback_autoprovisions_user_and_links_identity(
     client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="agendable.security.audit")
+
     monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_ID", "test-client")
     monkeypatch.setenv("AGENDABLE_OIDC_CLIENT_SECRET", "test-secret")
     monkeypatch.setenv(
@@ -70,6 +74,12 @@ async def test_oidc_callback_autoprovisions_user_and_links_identity(
         )
     ).scalar_one()
     assert identity.user_id == user.id
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "audit_event=auth.oidc.callback_login" in message and "outcome=success" in message
+        for message in messages
+    )
 
 
 @pytest.mark.asyncio

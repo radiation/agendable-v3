@@ -13,11 +13,62 @@ from agendable.auth import require_admin
 from agendable.db import get_session
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
-from agendable.logging_config import log_with_fields
+from agendable.logging_config import log_security_audit_event, log_with_fields
 from agendable.web.routes.common import templates
 
 router = APIRouter()
 logger = logging.getLogger("agendable.admin")
+
+
+def _with_actor_fields(
+    *,
+    actor: User | None = None,
+    actor_user_id: object | None = None,
+    actor_email: str | None = None,
+    **fields: object,
+) -> dict[str, object]:
+    normalized_fields = dict(fields)
+    resolved_user_id: object | None = actor_user_id
+    resolved_email: str | None = actor_email
+
+    if actor is not None:
+        if resolved_user_id is None:
+            resolved_user_id = actor.id
+        if resolved_email is None:
+            resolved_email = actor.email
+
+    if resolved_user_id is not None:
+        normalized_fields["actor_user_id"] = resolved_user_id
+    if resolved_email is not None:
+        normalized_fields["actor_email"] = resolved_email
+    return normalized_fields
+
+
+def _audit_admin_denied(
+    *,
+    event: str,
+    reason: str,
+    **fields: object,
+) -> None:
+    log_security_audit_event(
+        audit_event=f"admin.{event}",
+        outcome="denied",
+        audit_level=logging.WARNING,
+        reason=reason,
+        **fields,
+    )
+
+
+def _audit_admin_success(
+    *,
+    event: str,
+    **fields: object,
+) -> None:
+    log_security_audit_event(
+        audit_event=f"admin.{event}",
+        outcome="success",
+        **fields,
+    )
 
 
 def _parse_bool(raw: str) -> bool:
@@ -114,6 +165,15 @@ async def admin_update_user_role(
     try:
         new_role = UserRole(role.strip().lower())
     except ValueError:
+        _audit_admin_denied(
+            event="user_role_update",
+            reason="invalid_role",
+            **_with_actor_fields(
+                actor=current_user,
+                target_user_id=user_id,
+                requested_role=role,
+            ),
+        )
         log_with_fields(
             logger,
             logging.WARNING,
@@ -125,6 +185,16 @@ async def admin_update_user_role(
         raise HTTPException(status_code=400, detail="Invalid role") from None
 
     if user.id == current_user.id and new_role != UserRole.admin:
+        _audit_admin_denied(
+            event="user_role_update",
+            reason="self_demotion_blocked",
+            **_with_actor_fields(
+                actor=current_user,
+                target_user_id=user.id,
+                previous_role=user.role.value,
+                requested_role=new_role.value,
+            ),
+        )
         log_with_fields(
             logger,
             logging.WARNING,
@@ -144,6 +214,15 @@ async def admin_update_user_role(
     previous_role = user.role.value
     user.role = new_role
     await session.commit()
+    _audit_admin_success(
+        event="user_role_update",
+        **_with_actor_fields(
+            actor=current_user,
+            target_user_id=user.id,
+            previous_role=previous_role,
+            new_role=new_role.value,
+        ),
+    )
     log_with_fields(
         logger,
         logging.INFO,
@@ -169,6 +248,16 @@ async def admin_update_user_active(
 
     new_is_active = _parse_bool(is_active)
     if user.id == current_user.id and not new_is_active:
+        _audit_admin_denied(
+            event="user_active_update",
+            reason="self_deactivation_blocked",
+            **_with_actor_fields(
+                actor=current_user,
+                target_user_id=user.id,
+                previous_is_active=user.is_active,
+                requested_is_active=new_is_active,
+            ),
+        )
         log_with_fields(
             logger,
             logging.WARNING,
@@ -188,6 +277,15 @@ async def admin_update_user_active(
     previous_is_active = user.is_active
     user.is_active = new_is_active
     await session.commit()
+    _audit_admin_success(
+        event="user_active_update",
+        **_with_actor_fields(
+            actor=current_user,
+            target_user_id=user.id,
+            previous_is_active=previous_is_active,
+            new_is_active=new_is_active,
+        ),
+    )
     log_with_fields(
         logger,
         logging.INFO,

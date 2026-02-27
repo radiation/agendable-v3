@@ -84,6 +84,31 @@ def log_with_fields(
     logger.log(level, "%s", message, exc_info=exc_info)
 
 
+def log_security_audit_event(
+    *,
+    audit_event: str,
+    outcome: str,
+    **fields: object,
+) -> None:
+    event_logger = logging.getLogger("agendable.security.audit")
+    selected_level = logging.INFO
+    provided_level = fields.get("audit_level")
+    if isinstance(provided_level, int):
+        selected_level = provided_level
+
+    sanitized_fields = dict(fields)
+    sanitized_fields.pop("audit_level", None)
+
+    log_with_fields(
+        event_logger,
+        selected_level,
+        "security audit event",
+        audit_event=audit_event,
+        outcome=outcome,
+        **sanitized_fields,
+    )
+
+
 def configure_logging(settings: Settings | None = None) -> None:
     selected_settings = settings if settings is not None else get_settings()
     level = normalize_log_level(selected_settings.log_level)
