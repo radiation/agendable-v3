@@ -6,6 +6,7 @@ html {
     --border: #e5e7eb;
     --link: #2563eb;
     --control-bg: #ffffff;
+    --danger: #b91c1c;
 }
 
 html.dark {
@@ -16,6 +17,7 @@ html.dark {
     --border: #374151;
     --link: #93c5fd;
     --control-bg: #111827;
+    --danger: #fca5a5;
 }
 
 body {
@@ -79,6 +81,25 @@ label.inline {
 .group {
     display: grid;
     gap: 0.35rem;
+}
+
+.inline-form {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: end;
+}
+
+.field-error {
+    color: var(--danger);
+    font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+    .inline-form {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
 }
 
 ul {

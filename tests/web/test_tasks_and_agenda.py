@@ -410,3 +410,76 @@ async def test_completed_occurrence_is_read_only(
         )
         assert len(still_one_task) == 1
         assert len(still_one_agenda) == 1
+
+
+@pytest.mark.asyncio
+async def test_task_form_shows_inline_validation_errors(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Task UX {uuid.uuid4()}",
+    )
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    resp = await client.post(
+        f"/occurrences/{occ.id}/tasks",
+        data={"title": "   ", "due_at": "not-a-datetime"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 400
+    assert "Task title is required." in resp.text
+    assert "Enter a valid due date and time." in resp.text
+
+
+@pytest.mark.asyncio
+async def test_agenda_form_shows_inline_validation_errors(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Agenda UX {uuid.uuid4()}",
+    )
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    resp = await client.post(
+        f"/occurrences/{occ.id}/agenda",
+        data={"body": "   "},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 400
+    assert "Agenda item is required." in resp.text

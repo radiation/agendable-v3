@@ -538,3 +538,30 @@ async def test_series_detail_handles_all_past_occurrences(
     detail = await client.get(f"/series/{series.id}")
     assert detail.status_code == 200
     assert title in detail.text
+
+
+@pytest.mark.asyncio
+async def test_series_recurrence_options_requires_auth(client: AsyncClient) -> None:
+    resp = await client.get("/series/recurrence-options?recurrence_freq=WEEKLY")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_series_recurrence_options_renders_mode_specific_controls(
+    client: AsyncClient,
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    weekly = await client.get("/series/recurrence-options?recurrence_freq=WEEKLY")
+    assert weekly.status_code == 200
+    assert "Weekly days" in weekly.text
+    assert "monthly_bymonthday" not in weekly.text
+
+    monthly = await client.get("/series/recurrence-options?recurrence_freq=MONTHLY")
+    assert monthly.status_code == 200
+    assert "monthly_bymonthday" in monthly.text
+    assert "Weekly days" not in monthly.text
+
+    fallback = await client.get("/series/recurrence-options?recurrence_freq=UNKNOWN")
+    assert fallback.status_code == 200
+    assert "Daily recurrence does not require extra options." in fallback.text

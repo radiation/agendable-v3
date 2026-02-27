@@ -30,6 +30,15 @@ from agendable.web.routes.common import (
 router = APIRouter()
 logger = logging.getLogger("agendable.series")
 
+_VALID_RECURRENCE_FREQS = {"DAILY", "WEEKLY", "MONTHLY"}
+
+
+def _normalize_recurrence_freq(raw: str) -> str:
+    normalized = raw.strip().upper()
+    if normalized in _VALID_RECURRENCE_FREQS:
+        return normalized
+    return "DAILY"
+
 
 def _validate_create_series_inputs(
     *,
@@ -111,6 +120,24 @@ async def index(request: Request, session: AsyncSession = Depends(get_session)) 
         {
             "series": series,
             "series_recurrence": series_recurrence,
+            "current_user": current_user,
+            "selected_recurrence_freq": "DAILY",
+        },
+    )
+
+
+@router.get("/series/recurrence-options", response_class=HTMLResponse)
+async def series_recurrence_options(
+    request: Request,
+    recurrence_freq: str = "DAILY",
+    current_user: User = Depends(require_user),
+) -> HTMLResponse:
+    selected = _normalize_recurrence_freq(recurrence_freq)
+    return templates.TemplateResponse(
+        request,
+        "partials/series_recurrence_options.html",
+        {
+            "recurrence_freq": selected,
             "current_user": current_user,
         },
     )
