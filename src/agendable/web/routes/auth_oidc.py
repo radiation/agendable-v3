@@ -49,10 +49,6 @@ def _audit_callback_denied(
     actor_email: str | None = None,
     link_mode: bool | None = None,
 ) -> None:
-    if link_mode is None:
-        audit_oidc_denied(event="callback", reason=reason, actor_email=actor_email)
-        return
-
     audit_oidc_denied(
         event="callback",
         reason=reason,

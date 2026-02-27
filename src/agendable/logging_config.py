@@ -53,10 +53,30 @@ class RequestContextFilter(logging.Filter):
         return True
 
 
+def _escape_log_text(value: str) -> str:
+    escaped: list[str] = []
+    for char in value:
+        codepoint = ord(char)
+        if char == "\n":
+            escaped.append("\\n")
+            continue
+        if char == "\r":
+            escaped.append("\\r")
+            continue
+        if char == "\t":
+            escaped.append("\\t")
+            continue
+        if codepoint < 0x20 or codepoint == 0x7F:
+            escaped.append(f"\\x{codepoint:02x}")
+            continue
+        escaped.append(char)
+    return "".join(escaped)
+
+
 def _format_log_value(value: object) -> str:
     if isinstance(value, str):
-        return value
-    return str(value)
+        return _escape_log_text(value)
+    return _escape_log_text(str(value))
 
 
 def format_log_fields(**fields: object) -> str:
@@ -140,6 +160,9 @@ def configure_logging(settings: Settings | None = None) -> None:
             },
             "root": {"handlers": ["default"], "level": level},
             "loggers": {
+                "agendable.security.audit": {
+                    "level": "INFO",
+                },
                 "uvicorn": {"level": level},
                 "uvicorn.error": {"level": level},
                 "uvicorn.access": {"level": level},

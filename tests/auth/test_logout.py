@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_logout_clears_session(client: AsyncClient) -> None:
+async def test_logout_clears_session(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="agendable.security.audit")
+
     # Create + sign in
     resp = await client.post(
         "/signup",
@@ -24,6 +31,14 @@ async def test_logout_clears_session(client: AsyncClient) -> None:
     # Logout
     resp = await client.post("/logout", follow_redirects=True)
     assert resp.status_code == 200
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "audit_event=auth.logout" in message
+        and "outcome=success" in message
+        and "actor_user_id=" in message
+        for message in messages
+    )
 
     # Confirm we're anonymous again
     resp = await client.get("/", follow_redirects=False)
