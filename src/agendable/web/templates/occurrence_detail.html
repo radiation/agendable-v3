@@ -23,11 +23,13 @@
 <section>
     <h3>Attendees</h3>
     {% if not occurrence.is_completed %}
-    <form method="post" action="/occurrences/{{ occurrence.id }}/attendees"
-        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+    <form method="post" action="/occurrences/{{ occurrence.id }}/attendees" class="inline-form">
         <label>
             Add attendee (email)
-            <input name="email" type="email" required />
+            <input name="email" type="email" value="{{ attendee_form.email }}" required />
+            {% if attendee_form_errors.email %}
+            <small class="field-error">{{ attendee_form_errors.email }}</small>
+            {% endif %}
         </label>
         <button type="submit">Add attendee</button>
     </form>

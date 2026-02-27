@@ -56,6 +56,10 @@ def _base_agenda_form() -> dict[str, str]:
     return {"body": ""}
 
 
+def _base_attendee_form() -> dict[str, str]:
+    return {"email": ""}
+
+
 def _ensure_occurrence_writable(occurrence_id: uuid.UUID, is_completed: bool) -> None:
     if is_completed:
         raise HTTPException(
@@ -102,6 +106,8 @@ async def _occurrence_detail_context(
     task_form_errors: dict[str, str] | None = None,
     agenda_form: dict[str, str] | None = None,
     agenda_form_errors: dict[str, str] | None = None,
+    attendee_form: dict[str, str] | None = None,
+    attendee_form_errors: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     occ_repo = MeetingOccurrenceRepository(session)
     next_occurrence = await occ_repo.get_next_for_series(
@@ -146,6 +152,10 @@ async def _occurrence_detail_context(
     if agenda_form is not None:
         selected_agenda_form.update(agenda_form)
 
+    selected_attendee_form = _base_attendee_form()
+    if attendee_form is not None:
+        selected_attendee_form.update(attendee_form)
+
     return {
         "series": series,
         "recurrence_label": recurrence_label(
@@ -162,6 +172,8 @@ async def _occurrence_detail_context(
         "agenda_items": agenda_items,
         "agenda_form": selected_agenda_form,
         "agenda_form_errors": agenda_form_errors or {},
+        "attendee_form": selected_attendee_form,
+        "attendee_form_errors": attendee_form_errors or {},
         "attendee_users": attendee_users,
         "current_user": current_user,
     }
@@ -179,6 +191,8 @@ async def _render_occurrence_detail(
     task_form_errors: dict[str, str] | None = None,
     agenda_form: dict[str, str] | None = None,
     agenda_form_errors: dict[str, str] | None = None,
+    attendee_form: dict[str, str] | None = None,
+    attendee_form_errors: dict[str, str] | None = None,
 ) -> HTMLResponse:
     context = await _occurrence_detail_context(
         session=session,
@@ -189,6 +203,8 @@ async def _render_occurrence_detail(
         task_form_errors=task_form_errors,
         agenda_form=agenda_form,
         agenda_form_errors=agenda_form_errors,
+        attendee_form=attendee_form,
+        attendee_form_errors=attendee_form_errors,
     )
     return templates.TemplateResponse(
         request,
@@ -315,15 +331,39 @@ async def add_attendee(
     email: str = Form(...),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
-) -> RedirectResponse:
-    occurrence, _ = await _get_owned_occurrence(session, occurrence_id, current_user.id)
+) -> Response:
+    occurrence, series = await _get_owned_occurrence(session, occurrence_id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
-    users_repo = UserRepository(session)
-    attendee_user = await users_repo.get_by_email(email)
+    normalized_email = email.strip().lower()
+    attendee_form_errors: dict[str, str] = {}
+    attendee_form = {"email": normalized_email}
+
+    if not normalized_email:
+        attendee_form_errors["email"] = "Attendee email is required."
+
+    attendee_user: User | None = None
+    if not attendee_form_errors:
+        users_repo = UserRepository(session)
+        attendee_user = await users_repo.get_by_email(normalized_email)
+        if attendee_user is None:
+            attendee_form_errors["email"] = "No user found with that email."
+
+    if attendee_form_errors:
+        return await _render_occurrence_detail(
+            request=request,
+            session=session,
+            occurrence=occurrence,
+            series=series,
+            current_user=current_user,
+            status_code=400,
+            attendee_form=attendee_form,
+            attendee_form_errors=attendee_form_errors,
+        )
+
     if attendee_user is None:
-        raise HTTPException(status_code=400, detail="User not found")
+        raise HTTPException(status_code=400, detail="Invalid attendee")
 
     existing = (
         await session.execute(

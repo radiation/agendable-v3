@@ -483,3 +483,76 @@ async def test_agenda_form_shows_inline_validation_errors(
 
     assert resp.status_code == 400
     assert "Agenda item is required." in resp.text
+
+
+@pytest.mark.asyncio
+async def test_attendee_form_shows_inline_validation_for_unknown_email(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Attendee UX {uuid.uuid4()}",
+    )
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    resp = await client.post(
+        f"/occurrences/{occ.id}/attendees",
+        data={"email": "nobody@example.com"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 400
+    assert "No user found with that email." in resp.text
+    assert 'value="nobody@example.com"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_attendee_form_shows_inline_validation_for_blank_email(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Attendee Blank UX {uuid.uuid4()}",
+    )
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    resp = await client.post(
+        f"/occurrences/{occ.id}/attendees",
+        data={"email": "   "},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 400
+    assert "Attendee email is required." in resp.text
