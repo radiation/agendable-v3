@@ -85,7 +85,9 @@ def create_app() -> FastAPI:
         SessionMiddleware,
         secret_key=settings.session_secret.get_secret_value(),
         session_cookie=settings.session_cookie_name,
-        same_site="lax",
+        same_site=settings.session_cookie_same_site,
+        https_only=settings.session_cookie_https_only,
+        max_age=settings.session_cookie_max_age_seconds,
     )
 
     app.include_router(web_router)
