@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
     log_http_requests: bool = True
+    trust_proxy_headers: bool = False
 
     # For local development
     auto_create_db: bool = False

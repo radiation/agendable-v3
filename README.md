@@ -122,6 +122,7 @@ Session cookie hardening settings:
 Auth + identity-linking rate limits:
 
 - `AGENDABLE_AUTH_RATE_LIMIT_ENABLED='true'`
+- `AGENDABLE_TRUST_PROXY_HEADERS='false'` (set `true` only when app traffic comes through a trusted reverse proxy)
 - `AGENDABLE_LOGIN_RATE_LIMIT_IP_ATTEMPTS='10'`
 - `AGENDABLE_LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS='60'`
 - `AGENDABLE_LOGIN_RATE_LIMIT_ACCOUNT_ATTEMPTS='5'`
@@ -134,6 +135,8 @@ Auth + identity-linking rate limits:
 - `AGENDABLE_IDENTITY_LINK_START_RATE_LIMIT_IP_WINDOW_SECONDS='60'`
 - `AGENDABLE_IDENTITY_LINK_START_RATE_LIMIT_ACCOUNT_ATTEMPTS='5'`
 - `AGENDABLE_IDENTITY_LINK_START_RATE_LIMIT_ACCOUNT_WINDOW_SECONDS='60'`
+
+Login rate limits are consumed on failed authentication outcomes (not successful logins).
 
 ### Logging
 

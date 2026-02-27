@@ -16,7 +16,7 @@ from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.settings import get_settings
 from agendable.sso_oidc import oidc_enabled
 from agendable.web.routes.auth_oidc import router as auth_oidc_router
-from agendable.web.routes.auth_rate_limits import is_login_rate_limited
+from agendable.web.routes.auth_rate_limits import is_login_rate_limited, record_login_failure
 from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
@@ -179,6 +179,7 @@ async def login(
     user = await users.get_by_email(normalized_email)
 
     if user is None:
+        record_login_failure(request, normalized_email)
         return render_login_template(
             request,
             error="Account not found. Create one first.",
@@ -186,6 +187,7 @@ async def login(
         )
 
     if not user.is_active:
+        record_login_failure(request, normalized_email)
         return render_login_template(
             request,
             error="This account is deactivated. Contact an admin.",
@@ -193,6 +195,7 @@ async def login(
         )
 
     if user.password_hash is None or not verify_password(password, user.password_hash):
+        record_login_failure(request, normalized_email)
         return render_login_template(
             request,
             error="Invalid email or password",

@@ -4,14 +4,23 @@ import uuid
 
 from fastapi import Request
 
-from agendable.rate_limit import RateLimitRule, consume_rate_limit
+from agendable.rate_limit import RateLimitRule, consume_rate_limit, is_rate_limited
 from agendable.settings import Settings, get_settings
 
 
 def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",", 1)[0].strip() or "unknown"
+    settings = get_settings()
+    if settings.trust_proxy_headers:
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip
+
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            forwarded_ip = forwarded.split(",", 1)[0].strip()
+            if forwarded_ip:
+                return forwarded_ip
+
     if request.client is not None and request.client.host:
         return request.client.host
     return "unknown"
@@ -22,7 +31,7 @@ def is_login_rate_limited(request: Request, email: str) -> bool:
     if not settings.auth_rate_limit_enabled:
         return False
 
-    ip_limited = consume_rate_limit(
+    ip_limited = is_rate_limited(
         RateLimitRule(
             bucket="login-ip",
             max_attempts=settings.login_rate_limit_ip_attempts,
@@ -30,7 +39,7 @@ def is_login_rate_limited(request: Request, email: str) -> bool:
         ),
         client_ip(request),
     )
-    account_limited = consume_rate_limit(
+    account_limited = is_rate_limited(
         RateLimitRule(
             bucket="login-account",
             max_attempts=settings.login_rate_limit_account_attempts,
@@ -39,6 +48,29 @@ def is_login_rate_limited(request: Request, email: str) -> bool:
         email,
     )
     return ip_limited or account_limited
+
+
+def record_login_failure(request: Request, email: str) -> None:
+    settings = get_settings()
+    if not settings.auth_rate_limit_enabled:
+        return
+
+    _ = consume_rate_limit(
+        RateLimitRule(
+            bucket="login-ip",
+            max_attempts=settings.login_rate_limit_ip_attempts,
+            window_seconds=settings.login_rate_limit_ip_window_seconds,
+        ),
+        client_ip(request),
+    )
+    _ = consume_rate_limit(
+        RateLimitRule(
+            bucket="login-account",
+            max_attempts=settings.login_rate_limit_account_attempts,
+            window_seconds=settings.login_rate_limit_account_window_seconds,
+        ),
+        email,
+    )
 
 
 def is_oidc_callback_rate_limited(
