@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import SecretStr
+from typing import Literal
+
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +27,9 @@ class Settings(BaseSettings):
     # Session cookie auth (MVP). In production, override via env.
     session_secret: SecretStr = SecretStr("dev-insecure-change-me")
     session_cookie_name: str = "agendable_session"
+    session_cookie_same_site: Literal["lax", "strict", "none"] = "lax"
+    session_cookie_https_only: bool = False
+    session_cookie_max_age_seconds: int = Field(default=60 * 60 * 24 * 14, ge=60)
 
     # Reminder integrations (optional for now)
     slack_webhook_url: SecretStr | None = None

@@ -112,6 +112,13 @@ For production, override the session secret:
 
 - `AGENDABLE_SESSION_SECRET='...'`
 
+Session cookie hardening settings:
+
+- `AGENDABLE_SESSION_COOKIE_NAME='agendable_session'`
+- `AGENDABLE_SESSION_COOKIE_SAME_SITE='lax'` (`strict` recommended for production if your auth flow allows it)
+- `AGENDABLE_SESSION_COOKIE_HTTPS_ONLY='true'` (set `true` in production behind HTTPS)
+- `AGENDABLE_SESSION_COOKIE_MAX_AGE_SECONDS='1209600'` (default 14 days)
+
 ### Logging
 
 Runtime logging is configured via Python's built-in `logging` with environment-driven settings:
