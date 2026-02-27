@@ -1,0 +1,170 @@
+name: Deploy GCP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-gcp-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, migrate, deploy web + reminder job
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      ARTIFACT_REPO: ${{ vars.GCP_ARTIFACT_REPO }}
+      IMAGE_NAME: ${{ vars.GCP_IMAGE_NAME }}
+      CLOUDSQL_INSTANCE: ${{ vars.GCP_CLOUDSQL_INSTANCE }}
+      WEB_SERVICE: ${{ vars.GCP_WEB_SERVICE }}
+      REMINDER_JOB: ${{ vars.GCP_REMINDER_JOB }}
+      SCHEDULER_JOB: ${{ vars.GCP_SCHEDULER_JOB }}
+      RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Validate required deployment vars
+        run: |
+          set -euo pipefail
+          required=(
+            PROJECT_ID
+            REGION
+            ARTIFACT_REPO
+            IMAGE_NAME
+            CLOUDSQL_INSTANCE
+            WEB_SERVICE
+            REMINDER_JOB
+            SCHEDULER_JOB
+            RUNTIME_SERVICE_ACCOUNT
+          )
+
+          for key in "${required[@]}"; do
+            value="${!key:-}"
+            if [[ -z "$value" ]]; then
+              echo "Missing required repository variable: $key"
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="${GITHUB_SHA:0:12}"
+          IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$ARTIFACT_REPO/$IMAGE_NAME:$IMAGE_TAG"
+
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+          gcloud builds submit --tag "$IMAGE_URI"
+
+      - name: Create or update migration job
+        run: |
+          set -euo pipefail
+          if gcloud run jobs describe agendable-migrate --region "$REGION" >/dev/null 2>&1; then
+            gcloud run jobs update agendable-migrate \
+              --image "$IMAGE_URI" \
+              --region "$REGION" \
+              --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+              --add-cloudsql-instances "$CLOUDSQL_INSTANCE" \
+              --set-env-vars AGENDABLE_AUTO_CREATE_DB=false,AGENDABLE_LOG_JSON=true,AGENDABLE_LOG_LEVEL=INFO \
+              --set-secrets AGENDABLE_DATABASE_URL=AGENDABLE_DATABASE_URL:latest \
+              --command alembic \
+              --args upgrade,head
+          else
+            gcloud run jobs create agendable-migrate \
+              --image "$IMAGE_URI" \
+              --region "$REGION" \
+              --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+              --add-cloudsql-instances "$CLOUDSQL_INSTANCE" \
+              --set-env-vars AGENDABLE_AUTO_CREATE_DB=false,AGENDABLE_LOG_JSON=true,AGENDABLE_LOG_LEVEL=INFO \
+              --set-secrets AGENDABLE_DATABASE_URL=AGENDABLE_DATABASE_URL:latest \
+              --command alembic \
+              --args upgrade,head
+          fi
+
+      - name: Run migrations
+        run: gcloud run jobs execute agendable-migrate --region "$REGION" --wait
+
+      - name: Deploy web service
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$WEB_SERVICE" \
+            --image "$IMAGE_URI" \
+            --region "$REGION" \
+            --allow-unauthenticated \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --add-cloudsql-instances "$CLOUDSQL_INSTANCE" \
+            --set-env-vars AGENDABLE_AUTO_CREATE_DB=false,AGENDABLE_LOG_JSON=true,AGENDABLE_LOG_LEVEL=INFO \
+            --set-secrets AGENDABLE_DATABASE_URL=AGENDABLE_DATABASE_URL:latest,AGENDABLE_SESSION_SECRET=AGENDABLE_SESSION_SECRET:latest
+
+      - name: Create or update reminder job
+        run: |
+          set -euo pipefail
+          if gcloud run jobs describe "$REMINDER_JOB" --region "$REGION" >/dev/null 2>&1; then
+            gcloud run jobs update "$REMINDER_JOB" \
+              --image "$IMAGE_URI" \
+              --region "$REGION" \
+              --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+              --add-cloudsql-instances "$CLOUDSQL_INSTANCE" \
+              --set-env-vars AGENDABLE_AUTO_CREATE_DB=false,AGENDABLE_LOG_JSON=true,AGENDABLE_LOG_LEVEL=INFO \
+              --set-secrets AGENDABLE_DATABASE_URL=AGENDABLE_DATABASE_URL:latest,AGENDABLE_SESSION_SECRET=AGENDABLE_SESSION_SECRET:latest \
+              --command agendable \
+              --args run-reminders
+          else
+            gcloud run jobs create "$REMINDER_JOB" \
+              --image "$IMAGE_URI" \
+              --region "$REGION" \
+              --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+              --add-cloudsql-instances "$CLOUDSQL_INSTANCE" \
+              --set-env-vars AGENDABLE_AUTO_CREATE_DB=false,AGENDABLE_LOG_JSON=true,AGENDABLE_LOG_LEVEL=INFO \
+              --set-secrets AGENDABLE_DATABASE_URL=AGENDABLE_DATABASE_URL:latest,AGENDABLE_SESSION_SECRET=AGENDABLE_SESSION_SECRET:latest \
+              --command agendable \
+              --args run-reminders
+          fi
+
+      - name: Create or update reminder scheduler
+        run: |
+          set -euo pipefail
+          RUN_JOB_URI="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$REMINDER_JOB:run"
+
+          if gcloud scheduler jobs describe "$SCHEDULER_JOB" --location "$REGION" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "$SCHEDULER_JOB" \
+              --location "$REGION" \
+              --schedule "* * * * *" \
+              --uri "$RUN_JOB_URI" \
+              --http-method POST \
+              --oauth-service-account-email "$RUNTIME_SERVICE_ACCOUNT"
+          else
+            gcloud scheduler jobs create http "$SCHEDULER_JOB" \
+              --location "$REGION" \
+              --schedule "* * * * *" \
+              --uri "$RUN_JOB_URI" \
+              --http-method POST \
+              --oauth-service-account-email "$RUNTIME_SERVICE_ACCOUNT"
+          fi
+
+      - name: Print deployed endpoints
+        run: |
+          set -euo pipefail
+          WEB_URL=$(gcloud run services describe "$WEB_SERVICE" --region "$REGION" --format='value(status.url)')
+          echo "Web service URL: $WEB_URL"

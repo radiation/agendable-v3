@@ -59,6 +59,12 @@ Set `AGENDABLE_DATABASE_URL` to an asyncpg URL, for example:
 
 Tables are managed by Alembic migrations.
 
+### Deploy to GCP
+
+For a production-oriented GCP deployment (Cloud Run web service, Cloud Run reminder job, Cloud SQL, Secret Manager), see:
+
+- `docs/deploy-gcp.md`
+
 ### CLI
 
 - Initialize DB (creates tables): `uv run agendable init-db`
