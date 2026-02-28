@@ -167,6 +167,21 @@ label.inline {
     gap: 0.5rem;
 }
 
+.sync-row {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.syncing-indicator {
+    display: none;
+}
+
+.syncing-indicator.htmx-request {
+    display: inline;
+}
+
 .back-link {
     display: inline-flex;
     margin-bottom: 0.75rem;
@@ -220,4 +235,44 @@ ul {
 button.typeahead-active {
     outline: 2px solid var(--link);
     outline-offset: -1px;
+}
+
+.live-updated {
+    animation: live-updated-flash 1s ease-out;
+}
+
+.row-fresh {
+    animation: row-fresh-flash 1.1s ease-out;
+}
+
+.freshness-badge {
+    display: inline-flex;
+    margin-left: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.05rem 0.45rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+}
+
+@keyframes row-fresh-flash {
+    0% {
+        background: color-mix(in oklab, var(--link) 14%, transparent);
+    }
+
+    100% {
+        background: transparent;
+    }
+}
+
+@keyframes live-updated-flash {
+    0% {
+        outline: 2px solid var(--link);
+        outline-offset: 2px;
+    }
+
+    100% {
+        outline: 2px solid transparent;
+        outline-offset: 2px;
+    }
 }

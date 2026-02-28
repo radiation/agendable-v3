@@ -372,6 +372,15 @@ async def test_completed_occurrence_is_read_only(
     toggle_agenda_resp = await client.post(f"/agenda/{agenda.id}/toggle", follow_redirects=False)
     assert toggle_agenda_resp.status_code == 400
 
+    detail_resp = await client.get(f"/occurrences/{occ.id}")
+    assert detail_resp.status_code == 200
+    assert "Meeting is completed, so attendees are read-only." in detail_resp.text
+    assert "Meeting is completed, so tasks are read-only." in detail_resp.text
+    assert "Meeting is completed, so agenda is read-only." in detail_resp.text
+    assert 'id="attendee-add-button" type="submit" disabled' in detail_resp.text
+    assert 'id="task-add-button" type="submit" disabled' in detail_resp.text
+    assert 'id="agenda-add-button" type="submit" disabled' in detail_resp.text
+
     async with db.SessionMaker() as verify_session:
         refreshed_occ = (
             await verify_session.execute(
@@ -607,10 +616,16 @@ async def test_invited_attendee_can_view_occurrence_pages(
     detail_resp = await client.get(f"/occurrences/{occ.id}")
     assert detail_resp.status_code == 200
     assert "Shared meeting view" in detail_resp.text
+    assert "Up to date" in detail_resp.text
+    assert "Shortcuts: Cmd/Ctrl+K focuses task" in detail_resp.text
+    assert 'id="task-capture-form"' in detail_resp.text
+    assert 'id="agenda-capture-form"' in detail_resp.text
 
     shared_panel_resp = await client.get(f"/occurrences/{occ.id}/shared-panel")
     assert shared_panel_resp.status_code == 200
     assert "Last refreshed:" in shared_panel_resp.text
+    assert "Active viewers (30s):" in shared_panel_resp.text
+    assert "Last activity:" in shared_panel_resp.text
 
 
 @pytest.mark.asyncio
@@ -984,12 +999,15 @@ async def test_occurrence_shared_panel_renders_live_sections(
     resp = await client.get(f"/occurrences/{occ.id}/shared-panel")
     assert resp.status_code == 200
     assert "Last refreshed:" in resp.text
-    assert "Shared task" in resp.text
-    assert "Shared agenda" in resp.text
-    assert "Attendees" in resp.text
+    assert "Active viewers (30s):" in resp.text
+    assert "Last activity:" in resp.text
+    assert "Attendees, tasks, and agenda stay synced in the sections below." in resp.text
     assert 'hx-swap-oob="outerHTML"' in resp.text
     assert "occurrence-live-tasks" in resp.text
     assert "occurrence-live-agenda" in resp.text
+    assert 'data-live-key="task-' in resp.text
+    assert 'data-live-signature="' in resp.text
+    assert 'data-live-key="agenda-' in resp.text
 
 
 @pytest.mark.asyncio

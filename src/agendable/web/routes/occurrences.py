@@ -41,6 +41,10 @@ from agendable.web.routes.common import (
 router = APIRouter()
 logger = logging.getLogger("agendable.occurrences")
 
+_PRESENCE_WINDOW_SECONDS = 30
+_occurrence_presence: dict[uuid.UUID, dict[uuid.UUID, datetime]] = {}
+_occurrence_last_activity: dict[uuid.UUID, tuple[datetime, str]] = {}
+
 
 def _base_task_form(
     *,
@@ -80,6 +84,66 @@ def _normalize_optional_text(value: str | None) -> str | None:
     if not normalized:
         return None
     return normalized
+
+
+def _relative_time_label(*, then: datetime, now: datetime) -> str:
+    normalized_then = _as_utc(then)
+    normalized_now = _as_utc(now)
+    delta_seconds = max(0, int((normalized_now - normalized_then).total_seconds()))
+    if delta_seconds < 5:
+        return "just now"
+    if delta_seconds < 60:
+        return f"{delta_seconds}s ago"
+    if delta_seconds < 3600:
+        return f"{delta_seconds // 60}m ago"
+    return f"{delta_seconds // 3600}h ago"
+
+
+def _mark_presence(*, occurrence_id: uuid.UUID, user_id: uuid.UUID, now: datetime) -> int:
+    occurrence_presence = _occurrence_presence.setdefault(occurrence_id, {})
+    cutoff = now.timestamp() - _PRESENCE_WINDOW_SECONDS
+    stale_user_ids = [
+        seen_user_id
+        for seen_user_id, seen_at in occurrence_presence.items()
+        if seen_at.timestamp() < cutoff
+    ]
+    for stale_user_id in stale_user_ids:
+        occurrence_presence.pop(stale_user_id, None)
+    occurrence_presence[user_id] = now
+    return len(occurrence_presence)
+
+
+def _record_occurrence_activity(
+    *,
+    occurrence_id: uuid.UUID,
+    actor_display_name: str,
+    now: datetime,
+) -> None:
+    _occurrence_last_activity[occurrence_id] = (_as_utc(now), actor_display_name)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _latest_content_activity_at(
+    *,
+    occurrence: MeetingOccurrence,
+    tasks: list[Task],
+    agenda_items: list[AgendaItem],
+) -> datetime:
+    latest = _as_utc(occurrence.created_at)
+    for task in tasks:
+        task_created_at = _as_utc(task.created_at)
+        if task_created_at > latest:
+            latest = task_created_at
+    for agenda_item in agenda_items:
+        agenda_created_at = _as_utc(agenda_item.created_at)
+        if agenda_created_at > latest:
+            latest = agenda_created_at
+    return latest
 
 
 async def _get_owned_occurrence(
@@ -206,18 +270,46 @@ async def _shared_panel_context(
     occurrence: MeetingOccurrence,
     current_user: User,
 ) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    active_viewers_count = _mark_presence(
+        occurrence_id=occurrence.id,
+        user_id=current_user.id,
+        now=now,
+    )
     tasks, agenda_items, attendee_users = await _occurrence_collections(
         session,
         occurrence,
         current_user,
     )
+
+    latest_content_activity_at = _latest_content_activity_at(
+        occurrence=occurrence,
+        tasks=tasks,
+        agenda_items=agenda_items,
+    )
+    latest_activity_at = latest_content_activity_at
+    latest_activity_actor: str | None = None
+    tracked_activity = _occurrence_last_activity.get(occurrence.id)
+    if tracked_activity is not None:
+        tracked_activity_at, tracked_activity_actor = tracked_activity
+        if tracked_activity_at >= latest_activity_at:
+            latest_activity_at = tracked_activity_at
+            latest_activity_actor = tracked_activity_actor
+
+    latest_activity_text = _relative_time_label(then=latest_activity_at, now=now)
+    if latest_activity_actor is not None:
+        latest_activity_text = f"{latest_activity_text} by {latest_activity_actor}"
+
     return {
         "occurrence": occurrence,
         "tasks": tasks,
         "agenda_items": agenda_items,
         "attendee_users": attendee_users,
+        "presence_window_seconds": _PRESENCE_WINDOW_SECONDS,
+        "active_viewers_count": active_viewers_count,
+        "latest_activity_text": latest_activity_text,
         "current_user": current_user,
-        "refreshed_at": datetime.now(UTC),
+        "refreshed_at": now,
     }
 
 
@@ -394,6 +486,7 @@ async def occurrence_detail(
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
     occurrence, series = await _get_accessible_occurrence(session, occurrence_id, current_user.id)
+    _mark_presence(occurrence_id=occurrence.id, user_id=current_user.id, now=datetime.now(UTC))
     return await _render_occurrence_detail(
         request=request,
         session=session,
@@ -492,6 +585,11 @@ async def create_task(
     )
     session.add(task)
     await session.commit()
+    _record_occurrence_activity(
+        occurrence_id=occurrence.id,
+        actor_display_name=current_user.full_name,
+        now=datetime.now(UTC),
+    )
 
     log_with_fields(
         logger,
@@ -563,6 +661,11 @@ async def add_attendee(
             MeetingOccurrenceAttendee(occurrence_id=occurrence_id, user_id=attendee_user.id)
         )
         await session.commit()
+        _record_occurrence_activity(
+            occurrence_id=occurrence.id,
+            actor_display_name=current_user.full_name,
+            now=datetime.now(UTC),
+        )
         log_with_fields(
             logger,
             logging.INFO,
@@ -602,6 +705,11 @@ async def toggle_task(
 
     task.is_done = not task.is_done
     await session.commit()
+    _record_occurrence_activity(
+        occurrence_id=occurrence.id,
+        actor_display_name=current_user.full_name,
+        now=datetime.now(UTC),
+    )
 
     log_with_fields(
         logger,
@@ -652,6 +760,11 @@ async def add_agenda_item(
     )
     session.add(item)
     await session.commit()
+    _record_occurrence_activity(
+        occurrence_id=occurrence.id,
+        actor_display_name=current_user.full_name,
+        now=datetime.now(UTC),
+    )
 
     log_with_fields(
         logger,
@@ -712,6 +825,11 @@ async def convert_agenda_item_to_task(
     item.is_done = True
     session.add(task)
     await session.commit()
+    _record_occurrence_activity(
+        occurrence_id=occurrence.id,
+        actor_display_name=current_user.full_name,
+        now=datetime.now(UTC),
+    )
 
     log_with_fields(
         logger,
@@ -754,6 +872,11 @@ async def toggle_agenda_item(
     item.is_done = not item.is_done
 
     await session.commit()
+    _record_occurrence_activity(
+        occurrence_id=occurrence.id,
+        actor_display_name=current_user.full_name,
+        now=datetime.now(UTC),
+    )
 
     log_with_fields(
         logger,
@@ -795,6 +918,11 @@ async def complete_occurrence(
     next_occurrence = await complete_occurrence_and_roll_forward(
         session,
         occurrence=occurrence,
+    )
+    _record_occurrence_activity(
+        occurrence_id=occurrence.id,
+        actor_display_name=current_user.full_name,
+        now=datetime.now(UTC),
     )
 
     log_with_fields(

@@ -1,51 +1,7 @@
 <p><small>Last refreshed: {{ refreshed_at|format_dt(current_user.timezone) }}</small></p>
-
-<div class="stack-lg">
-    <div>
-        <h4>Attendees</h4>
-        <ul class="list-clean">
-            {% for attendee in attendee_users %}
-            <li>{{ attendee.full_name }}</li>
-            {% else %}
-            <li><em>No attendees yet.</em></li>
-            {% endfor %}
-        </ul>
-    </div>
-
-    <div>
-        <h4>Tasks</h4>
-        <ul class="list-clean">
-            {% for t in tasks %}
-            <li>
-                {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
-                {% if t.description %}
-                <small>— {{ t.description }}</small>
-                {% endif %}
-                <small>— {{ t.assignee.full_name }}</small>
-                <small>— due {{ t.due_at|format_dt(current_user.timezone) }}</small>
-            </li>
-            {% else %}
-            <li><em>No tasks yet.</em></li>
-            {% endfor %}
-        </ul>
-    </div>
-
-    <div>
-        <h4>Agenda</h4>
-        <ul class="list-clean">
-            {% for a in agenda_items %}
-            <li>
-                {% if a.is_done %}<s>{{ a.body }}</s>{% else %}{{ a.body }}{% endif %}
-                {% if a.description %}
-                <small>— {{ a.description }}</small>
-                {% endif %}
-            </li>
-            {% else %}
-            <li><em>No agenda items yet.</em></li>
-            {% endfor %}
-        </ul>
-    </div>
-</div>
+<p><small>Active viewers ({{ presence_window_seconds }}s): {{ active_viewers_count }}</small></p>
+<p><small>Last activity: {{ latest_activity_text }}</small></p>
+<p><small>Attendees, tasks, and agenda stay synced in the sections below.</small></p>
 
 <div id="occurrence-live-attendees" hx-swap-oob="outerHTML">
     {% include "partials/occurrence_attendees_list.html" %}
