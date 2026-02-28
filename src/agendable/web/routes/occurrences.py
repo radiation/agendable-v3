@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -100,14 +100,39 @@ async def _get_owned_occurrence(
     return occurrence, series
 
 
-async def _ensure_occurrence_owner(
+async def _get_accessible_occurrence(
     session: AsyncSession,
-    occurrence: MeetingOccurrence,
-    owner_user_id: uuid.UUID,
-) -> None:
-    series_repo = MeetingSeriesRepository(session)
-    if await series_repo.get_for_owner(occurrence.series_id, owner_user_id) is None:
+    occurrence_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> tuple[MeetingOccurrence, MeetingSeries]:
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(occurrence_id)
+    if occurrence is None:
         raise HTTPException(status_code=404)
+
+    series_repo = MeetingSeriesRepository(session)
+    owner_series = await series_repo.get_for_owner(occurrence.series_id, user_id)
+    if owner_series is not None:
+        return occurrence, owner_series
+
+    attendee_link = (
+        await session.execute(
+            select(MeetingOccurrenceAttendee).where(
+                MeetingOccurrenceAttendee.occurrence_id == occurrence.id,
+                MeetingOccurrenceAttendee.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if attendee_link is None:
+        raise HTTPException(status_code=404)
+
+    series = (
+        await session.execute(select(MeetingSeries).where(MeetingSeries.id == occurrence.series_id))
+    ).scalar_one_or_none()
+    if series is None:
+        raise HTTPException(status_code=404)
+
+    return occurrence, series
 
 
 async def _get_default_task_due_at(
@@ -158,6 +183,42 @@ async def _list_occurrence_attendee_users(
         attendee_user_ids.add(link.user_id)
 
     return attendee_users
+
+
+async def _occurrence_collections(
+    session: AsyncSession,
+    occurrence: MeetingOccurrence,
+    current_user: User,
+) -> tuple[list[Task], list[AgendaItem], list[User]]:
+    tasks_repo = TaskRepository(session)
+    tasks = await tasks_repo.list_for_occurrence(occurrence.id)
+
+    agenda_repo = AgendaItemRepository(session)
+    agenda_items = await agenda_repo.list_for_occurrence(occurrence.id)
+
+    attendee_users = await _list_occurrence_attendee_users(session, occurrence.id, current_user)
+    return tasks, agenda_items, attendee_users
+
+
+async def _shared_panel_context(
+    *,
+    session: AsyncSession,
+    occurrence: MeetingOccurrence,
+    current_user: User,
+) -> dict[str, Any]:
+    tasks, agenda_items, attendee_users = await _occurrence_collections(
+        session,
+        occurrence,
+        current_user,
+    )
+    return {
+        "occurrence": occurrence,
+        "tasks": tasks,
+        "agenda_items": agenda_items,
+        "attendee_users": attendee_users,
+        "current_user": current_user,
+        "refreshed_at": datetime.now(UTC),
+    }
 
 
 def _merged_task_form(
@@ -252,13 +313,11 @@ async def _occurrence_detail_context(
         current_user.timezone,
     )
 
-    tasks_repo = TaskRepository(session)
-    tasks = await tasks_repo.list_for_occurrence(occurrence.id)
-
-    agenda_repo = AgendaItemRepository(session)
-    agenda_items = await agenda_repo.list_for_occurrence(occurrence.id)
-
-    attendee_users = await _list_occurrence_attendee_users(session, occurrence.id, current_user)
+    tasks, agenda_items, attendee_users = await _occurrence_collections(
+        session,
+        occurrence,
+        current_user,
+    )
 
     selected_task_form = _merged_task_form(
         task_due_default_value=task_due_default_value,
@@ -288,6 +347,7 @@ async def _occurrence_detail_context(
         "attendee_form_errors": attendee_form_errors or {},
         "attendee_users": attendee_users,
         "current_user": current_user,
+        "refreshed_at": datetime.now(UTC),
     }
 
 
@@ -333,13 +393,37 @@ async def occurrence_detail(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    occurrence, series = await _get_owned_occurrence(session, occurrence_id, current_user.id)
+    occurrence, series = await _get_accessible_occurrence(session, occurrence_id, current_user.id)
     return await _render_occurrence_detail(
         request=request,
         session=session,
         occurrence=occurrence,
         series=series,
         current_user=current_user,
+    )
+
+
+@router.get(
+    "/occurrences/{occurrence_id}/shared-panel",
+    response_class=HTMLResponse,
+    name="occurrence_shared_panel",
+)
+async def occurrence_shared_panel(
+    request: Request,
+    occurrence_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> HTMLResponse:
+    occurrence, _ = await _get_accessible_occurrence(session, occurrence_id, current_user.id)
+    context = await _shared_panel_context(
+        session=session,
+        occurrence=occurrence,
+        current_user=current_user,
+    )
+    return templates.TemplateResponse(
+        request,
+        "partials/occurrence_shared_panel.html",
+        context,
     )
 
 
@@ -354,7 +438,7 @@ async def create_task(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> Response:
-    occurrence, series = await _get_owned_occurrence(session, occurrence_id, current_user.id)
+    occurrence, series = await _get_accessible_occurrence(session, occurrence_id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
@@ -512,7 +596,7 @@ async def toggle_task(
     if occurrence is None:
         raise HTTPException(status_code=404)
 
-    await _ensure_occurrence_owner(session, occurrence, current_user.id)
+    await _get_accessible_occurrence(session, occurrence.id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
@@ -543,7 +627,7 @@ async def add_agenda_item(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> Response:
-    occurrence, series = await _get_owned_occurrence(session, occurrence_id, current_user.id)
+    occurrence, series = await _get_accessible_occurrence(session, occurrence_id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
@@ -602,13 +686,8 @@ async def convert_agenda_item_to_task(
     if occurrence is None:
         raise HTTPException(status_code=404)
 
-    await _ensure_occurrence_owner(session, occurrence, current_user.id)
+    _, series = await _get_accessible_occurrence(session, occurrence.id, current_user.id)
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
-
-    series_repo = MeetingSeriesRepository(session)
-    series = await series_repo.get_for_owner(occurrence.series_id, current_user.id)
-    if series is None:
-        raise HTTPException(status_code=404)
 
     assignee_errors: dict[str, str] = {}
     await _validate_task_assignee(
@@ -668,7 +747,7 @@ async def toggle_agenda_item(
     if occurrence is None:
         raise HTTPException(status_code=404)
 
-    await _ensure_occurrence_owner(session, occurrence, current_user.id)
+    await _get_accessible_occurrence(session, occurrence.id, current_user.id)
 
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 

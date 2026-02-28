@@ -1,0 +1,19 @@
+<ul class="list-clean">
+    {% for t in tasks %}
+    <li>
+        {% if not occurrence.is_completed %}
+        <form method="post" action="/tasks/{{ t.id }}/toggle" class="inline-actions">
+            <button type="submit">{% if t.is_done %}Undo{% else %}Done{% endif %}</button>
+        </form>
+        {% endif %}
+        {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
+        {% if t.description %}
+        <small>— {{ t.description }}</small>
+        {% endif %}
+        <small>— {{ t.assignee.full_name }}</small>
+        <small>— due {{ t.due_at|format_dt(current_user.timezone) }}</small>
+    </li>
+    {% else %}
+    <li><em>No tasks yet. Add one above to capture a follow-up before the meeting ends.</em></li>
+    {% endfor %}
+</ul>

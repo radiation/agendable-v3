@@ -1,0 +1,60 @@
+<p><small>Last refreshed: {{ refreshed_at|format_dt(current_user.timezone) }}</small></p>
+
+<div class="stack-lg">
+    <div>
+        <h4>Attendees</h4>
+        <ul class="list-clean">
+            {% for attendee in attendee_users %}
+            <li>{{ attendee.full_name }}</li>
+            {% else %}
+            <li><em>No attendees yet.</em></li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <div>
+        <h4>Tasks</h4>
+        <ul class="list-clean">
+            {% for t in tasks %}
+            <li>
+                {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
+                {% if t.description %}
+                <small>— {{ t.description }}</small>
+                {% endif %}
+                <small>— {{ t.assignee.full_name }}</small>
+                <small>— due {{ t.due_at|format_dt(current_user.timezone) }}</small>
+            </li>
+            {% else %}
+            <li><em>No tasks yet.</em></li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <div>
+        <h4>Agenda</h4>
+        <ul class="list-clean">
+            {% for a in agenda_items %}
+            <li>
+                {% if a.is_done %}<s>{{ a.body }}</s>{% else %}{{ a.body }}{% endif %}
+                {% if a.description %}
+                <small>— {{ a.description }}</small>
+                {% endif %}
+            </li>
+            {% else %}
+            <li><em>No agenda items yet.</em></li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+
+<div id="occurrence-live-attendees" hx-swap-oob="outerHTML">
+    {% include "partials/occurrence_attendees_list.html" %}
+</div>
+
+<div id="occurrence-live-tasks" hx-swap-oob="outerHTML">
+    {% include "partials/occurrence_tasks_list.html" %}
+</div>
+
+<div id="occurrence-live-agenda" hx-swap-oob="outerHTML">
+    {% include "partials/occurrence_agenda_list.html" %}
+</div>
