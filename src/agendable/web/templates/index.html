@@ -97,11 +97,35 @@
 
 <script>
     (() => {
+        let attendeeSuggestionIndex = -1;
+
+        const getAttendeeSuggestionButtons = () => {
+            const container = document.getElementById("attendee-suggestions");
+            if (!container) {
+                return [];
+            }
+            return Array.from(container.querySelectorAll("button[data-attendee-email]"));
+        };
+
+        const setAttendeeSuggestionIndex = (index) => {
+            const buttons = getAttendeeSuggestionButtons();
+            attendeeSuggestionIndex = index;
+
+            buttons.forEach((button, buttonIndex) => {
+                button.classList.toggle("typeahead-active", buttonIndex === attendeeSuggestionIndex);
+            });
+
+            if (attendeeSuggestionIndex >= 0 && attendeeSuggestionIndex < buttons.length) {
+                buttons[attendeeSuggestionIndex].scrollIntoView({ block: "nearest" });
+            }
+        };
+
         window.agendableClearAttendeeSuggestions = () => {
             const suggestions = document.getElementById("attendee-suggestions");
             if (suggestions) {
                 suggestions.innerHTML = "";
             }
+            attendeeSuggestionIndex = -1;
         };
 
         window.agendableAddAttendeeEmail = (email) => {
@@ -155,6 +179,63 @@
             }
 
             window.agendableAddAttendeeEmail(email);
+        });
+
+        const attendeesInput = document.getElementById("attendee-emails");
+        if (attendeesInput instanceof HTMLInputElement) {
+            attendeesInput.addEventListener("keydown", (event) => {
+                const buttons = getAttendeeSuggestionButtons();
+                if (buttons.length == 0) {
+                    if (event.key === "Escape") {
+                        window.agendableClearAttendeeSuggestions();
+                    }
+                    return;
+                }
+
+                if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    const nextIndex =
+                        attendeeSuggestionIndex < 0
+                            ? 0
+                            : (attendeeSuggestionIndex + 1) % buttons.length;
+                    setAttendeeSuggestionIndex(nextIndex);
+                    return;
+                }
+
+                if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const nextIndex =
+                        attendeeSuggestionIndex < 0
+                            ? buttons.length - 1
+                            : (attendeeSuggestionIndex - 1 + buttons.length) % buttons.length;
+                    setAttendeeSuggestionIndex(nextIndex);
+                    return;
+                }
+
+                if (event.key === "Enter") {
+                    if (attendeeSuggestionIndex >= 0 && attendeeSuggestionIndex < buttons.length) {
+                        event.preventDefault();
+                        const email = buttons[attendeeSuggestionIndex].dataset.attendeeEmail;
+                        if (email) {
+                            window.agendableAddAttendeeEmail(email);
+                        }
+                    }
+                    return;
+                }
+
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    window.agendableClearAttendeeSuggestions();
+                }
+            });
+        }
+
+        document.body.addEventListener("htmx:afterSwap", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement) || target.id !== "attendee-suggestions") {
+                return;
+            }
+            attendeeSuggestionIndex = -1;
         });
 
         const tzInput = document.getElementById("recurrence-timezone");
