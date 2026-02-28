@@ -1,0 +1,16 @@
+<p><small>Last refreshed: {{ refreshed_at|format_dt(current_user.timezone) }}</small></p>
+<p><small>Active viewers ({{ presence_window_seconds }}s): {{ active_viewers_count }}</small></p>
+<p><small>Last activity: {{ latest_activity_text }}</small></p>
+<p><small>Attendees, tasks, and agenda stay synced in the sections below.</small></p>
+
+<div id="occurrence-live-attendees" hx-swap-oob="outerHTML">
+    {% include "partials/occurrence_attendees_list.html" %}
+</div>
+
+<div id="occurrence-live-tasks" hx-swap-oob="outerHTML">
+    {% include "partials/occurrence_tasks_list.html" %}
+</div>
+
+<div id="occurrence-live-agenda" hx-swap-oob="outerHTML">
+    {% include "partials/occurrence_agenda_list.html" %}
+</div>

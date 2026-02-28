@@ -3,126 +3,149 @@
 {% block title %}Agendable — {{ series.title }} (meeting){% endblock %}
 
 {% block content %}
-<p><a href="/series/{{ series.id }}">← Back to series</a></p>
+<a class="back-link" href="/series/{{ series.id }}">← Back to series</a>
 
-<section>
-    <h2>{{ series.title }}</h2>
-    <p><small>Repeats: {{ recurrence_label }}</small></p>
-    <p><strong>Scheduled:</strong> {{ occurrence.scheduled_at|format_dt(current_user.timezone) }}</p>
-    {% if occurrence.is_completed %}
-    <p><strong>Status:</strong> Completed</p>
-    {% else %}
-    <form method="post" action="/occurrences/{{ occurrence.id }}/complete">
-        <button type="submit">Complete meeting & roll unfinished items forward</button>
-    </form>
-    {% endif %}
-</section>
-
-<hr />
-
-<section>
-    <h3>Attendees</h3>
-    {% if not occurrence.is_completed %}
-    <form method="post" action="/occurrences/{{ occurrence.id }}/attendees"
-        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
-        <label>
-            Add attendee (email)
-            <input name="email" type="email" required />
-        </label>
-        <button type="submit">Add attendee</button>
-    </form>
-    {% else %}
-    <p><small>Meeting is completed, so attendees are read-only.</small></p>
-    {% endif %}
-
-    <ul>
-        {% for attendee in attendee_users %}
-        <li>{{ attendee.full_name }}</li>
+<section id="occurrence-detail-root" class="stack-lg"
+    data-has-task-errors="{% if task_form_errors %}true{% else %}false{% endif %}"
+    data-has-agenda-errors="{% if agenda_form_errors %}true{% else %}false{% endif %}"
+    data-occurrence-completed="{% if occurrence.is_completed %}true{% else %}false{% endif %}">
+    <section class="section-card">
+        <h2>{{ series.title }}</h2>
+        <p><small>Repeats: {{ recurrence_label }}</small></p>
+        <p><strong>Scheduled:</strong> {{ occurrence.scheduled_at|format_dt(current_user.timezone) }}</p>
+        {% if occurrence.is_completed %}
+        <div class="inline-actions">
+            <strong>Status:</strong> <span class="status-pill">Completed</span>
+        </div>
         {% else %}
-        <li><em>No attendees yet.</em></li>
-        {% endfor %}
-    </ul>
+        <form method="post" action="/occurrences/{{ occurrence.id }}/complete">
+            <button type="submit">Complete meeting & roll unfinished items forward</button>
+        </form>
+        {% endif %}
+    </section>
+
+    <section class="section-card">
+        <div class="section-title">
+            <h3>Shared meeting view</h3>
+            <small>Auto-refreshes every 5s</small>
+        </div>
+        <div class="sync-row">
+            <small id="occurrence-sync-status" aria-live="polite">Up to date</small>
+            <small id="occurrence-syncing" class="syncing-indicator" aria-live="polite">Syncing…</small>
+            <small id="occurrence-sync-error" class="field-error" aria-live="polite"></small>
+        </div>
+        <div id="occurrence-shared-panel" hx-get="/occurrences/{{ occurrence.id }}/shared-panel"
+            hx-trigger="load, every 5s" hx-swap="innerHTML" hx-indicator="#occurrence-syncing">
+            {% include "partials/occurrence_shared_panel.html" %}
+        </div>
+    </section>
+
+    <section class="section-card">
+        <h3>Attendees</h3>
+        <form method="post" action="/occurrences/{{ occurrence.id }}/attendees" class="inline-form">
+            <label>
+                Add attendee (email)
+                <input name="email" type="email" value="{{ attendee_form.email }}" required {% if
+                    occurrence.is_completed %}disabled{% endif %} />
+                {% if attendee_form_errors.email %}
+                <small class="field-error">{{ attendee_form_errors.email }}</small>
+                {% endif %}
+            </label>
+            <button id="attendee-add-button" type="submit" {% if occurrence.is_completed %}disabled{% endif %}>Add
+                attendee</button>
+        </form>
+        {% if occurrence.is_completed %}
+        <p><small>Meeting is completed, so attendees are read-only.</small></p>
+        {% endif %}
+
+        <div id="occurrence-live-attendees">
+            {% include "partials/occurrence_attendees_list.html" %}
+        </div>
+    </section>
+
+    <section class="section-card">
+        <h3>Tasks</h3>
+        {% if not occurrence.is_completed %}
+        <p><small>Shortcuts: Cmd/Ctrl+K focuses task, Alt+T focuses task, Alt+A focuses agenda.</small></p>
+        {% endif %}
+
+        <form method="post" action="/occurrences/{{ occurrence.id }}/tasks" class="inline-form" id="task-capture-form"
+            data-capture-kind="task">
+            <label>
+                Task
+                <input id="task-title-input" name="title" value="{{ task_form.title }}" required {% if
+                    occurrence.is_completed %}disabled{% endif %} />
+                {% if task_form_errors.title %}
+                <small class="field-error">{{ task_form_errors.title }}</small>
+                {% endif %}
+            </label>
+            <label>
+                Description (optional)
+                <textarea name="description" rows="2" {% if occurrence.is_completed %}disabled{% endif
+                    %}>{{ task_form.description }}</textarea>
+            </label>
+            <label>
+                Assignee
+                <select name="assigned_user_id" {% if occurrence.is_completed %}disabled{% endif %}>
+                    {% for attendee in attendee_users %}
+                    <option value="{{ attendee.id }}" {% if task_form.assigned_user_id==attendee.id|string %}selected{%
+                        endif %}>{{ attendee.full_name }}</option>
+                    {% endfor %}
+                </select>
+                {% if task_form_errors.assigned_user_id %}
+                <small class="field-error">{{ task_form_errors.assigned_user_id }}</small>
+                {% endif %}
+            </label>
+            <label>
+                Due at (local time)
+                <input name="due_at" type="datetime-local" value="{{ task_form.due_at }}" required {% if
+                    occurrence.is_completed %}disabled{% endif %} />
+                {% if task_form_errors.due_at %}
+                <small class="field-error">{{ task_form_errors.due_at }}</small>
+                {% endif %}
+            </label>
+            <button id="task-add-button" type="submit" {% if occurrence.is_completed %}disabled{% endif %}>Add
+                task</button>
+        </form>
+        {% if occurrence.is_completed %}
+        <p><small>Meeting is completed, so tasks are read-only.</small></p>
+        {% endif %}
+
+        <div id="occurrence-live-tasks">
+            {% include "partials/occurrence_tasks_list.html" %}
+        </div>
+    </section>
+
+    <section class="section-card">
+        <h3>Agenda</h3>
+
+        <form method="post" action="/occurrences/{{ occurrence.id }}/agenda" class="inline-form"
+            id="agenda-capture-form" data-capture-kind="agenda">
+            <label>
+                Agenda item
+                <input id="agenda-body-input" name="body" value="{{ agenda_form.body }}" required {% if
+                    occurrence.is_completed %}disabled{% endif %} />
+                {% if agenda_form_errors.body %}
+                <small class="field-error">{{ agenda_form_errors.body }}</small>
+                {% endif %}
+            </label>
+            <label>
+                Description (optional)
+                <textarea name="description" rows="2" {% if occurrence.is_completed %}disabled{% endif
+                    %}>{{ agenda_form.description }}</textarea>
+            </label>
+            <button id="agenda-add-button" type="submit" {% if occurrence.is_completed %}disabled{% endif
+                %}>Add</button>
+        </form>
+        {% if occurrence.is_completed %}
+        <p><small>Meeting is completed, so agenda is read-only.</small></p>
+        {% endif %}
+
+        <div id="occurrence-live-agenda">
+            {% include "partials/occurrence_agenda_list.html" %}
+        </div>
+    </section>
 </section>
 
-<hr />
-
-<section>
-    <h3>Tasks</h3>
-
-    {% if not occurrence.is_completed %}
-    <form method="post" action="/occurrences/{{ occurrence.id }}/tasks"
-        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
-        <label>
-            Task
-            <input name="title" required />
-        </label>
-        <label>
-            Assignee
-            <select name="assigned_user_id">
-                {% for attendee in attendee_users %}
-                <option value="{{ attendee.id }}">{{ attendee.full_name }}</option>
-                {% endfor %}
-            </select>
-        </label>
-        <label>
-            Due at (local time)
-            <input name="due_at" type="datetime-local" value="{{ task_due_default_value }}" required />
-        </label>
-        <button type="submit">Add task</button>
-    </form>
-    {% else %}
-    <p><small>Meeting is completed, so tasks are read-only.</small></p>
-    {% endif %}
-
-    <ul>
-        {% for t in tasks %}
-        <li>
-            {% if not occurrence.is_completed %}
-            <form method="post" action="/tasks/{{ t.id }}/toggle" style="display:inline;">
-                <button type="submit">{% if t.is_done %}Undo{% else %}Done{% endif %}</button>
-            </form>
-            {% endif %}
-            {% if t.is_done %}<s>{{ t.title }}</s>{% else %}{{ t.title }}{% endif %}
-            <small>— {{ t.assignee.full_name }}</small>
-            <small>— due {{ t.due_at|format_dt(current_user.timezone) }}</small>
-        </li>
-        {% else %}
-        <li><em>No tasks yet.</em></li>
-        {% endfor %}
-    </ul>
-</section>
-
-<hr />
-
-<section>
-    <h3>Agenda</h3>
-
-    {% if not occurrence.is_completed %}
-    <form method="post" action="/occurrences/{{ occurrence.id }}/agenda"
-        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
-        <label>
-            Agenda item
-            <input name="body" required />
-        </label>
-        <button type="submit">Add</button>
-    </form>
-    {% else %}
-    <p><small>Meeting is completed, so agenda is read-only.</small></p>
-    {% endif %}
-
-    <ul>
-        {% for a in agenda_items %}
-        <li>
-            {% if not occurrence.is_completed %}
-            <form method="post" action="/agenda/{{ a.id }}/toggle" style="display:inline;">
-                <button type="submit">{% if a.is_done %}Undo{% else %}Done{% endif %}</button>
-            </form>
-            {% endif %}
-            {% if a.is_done %}<s>{{ a.body }}</s>{% else %}{{ a.body }}{% endif %}
-        </li>
-        {% else %}
-        <li><em>No agenda items yet.</em></li>
-        {% endfor %}
-    </ul>
-</section>
+<script src="/static/occurrence_detail.js"></script>
 {% endblock %}

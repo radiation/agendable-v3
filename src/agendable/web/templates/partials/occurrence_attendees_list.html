@@ -1,0 +1,7 @@
+<ul class="list-clean">
+    {% for attendee in attendee_users %}
+    <li>{{ attendee.full_name }}</li>
+    {% else %}
+    <li><em>No attendees yet.</em></li>
+    {% endfor %}
+</ul>

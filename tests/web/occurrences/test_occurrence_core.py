@@ -42,7 +42,7 @@ async def test_task_create_and_toggle_is_scoped(
 
     resp = await client.post(
         f"/occurrences/{occ.id}/tasks",
-        data={"title": "Do the thing"},
+        data={"title": "Do the thing", "description": "Task details"},
         follow_redirects=True,
     )
     assert resp.status_code == 200
@@ -53,6 +53,7 @@ async def test_task_create_and_toggle_is_scoped(
         )
     ).scalar_one()
     assert task.is_done is False
+    assert task.description == "Task details"
     assert task.assigned_user_id == series.owner_user_id
     assert task.due_at == occ.scheduled_at
     task_id = task.id
@@ -74,7 +75,6 @@ async def test_task_create_and_toggle_is_scoped(
     assert resp.status_code == 404
 
 
-@pytest.mark.asyncio
 async def test_agenda_add_and_toggle_is_scoped(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -103,7 +103,7 @@ async def test_agenda_add_and_toggle_is_scoped(
 
     resp = await client.post(
         f"/occurrences/{occ.id}/agenda",
-        data={"body": "Talk about priorities"},
+        data={"body": "Talk about priorities", "description": "Agenda context"},
         follow_redirects=True,
     )
     assert resp.status_code == 200
@@ -116,6 +116,7 @@ async def test_agenda_add_and_toggle_is_scoped(
         )
     ).scalar_one()
     assert item.is_done is False
+    assert item.description == "Agenda context"
     item_id = item.id
 
     resp = await client.post(f"/agenda/{item.id}/toggle", follow_redirects=True)
@@ -135,7 +136,6 @@ async def test_agenda_add_and_toggle_is_scoped(
     assert resp.status_code == 404
 
 
-@pytest.mark.asyncio
 async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -226,7 +226,6 @@ async def test_complete_occurrence_rolls_unfinished_items_to_next_occurrence(
         assert kept_agenda.occurrence_id == first.id
 
 
-@pytest.mark.asyncio
 async def test_task_assignment_requires_attendee(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -293,7 +292,6 @@ async def test_task_assignment_requires_attendee(
     assert assigned_task.assigned_user_id == bob.id
 
 
-@pytest.mark.asyncio
 async def test_completed_occurrence_is_read_only(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -369,6 +367,15 @@ async def test_completed_occurrence_is_read_only(
 
     toggle_agenda_resp = await client.post(f"/agenda/{agenda.id}/toggle", follow_redirects=False)
     assert toggle_agenda_resp.status_code == 400
+
+    detail_resp = await client.get(f"/occurrences/{occ.id}")
+    assert detail_resp.status_code == 200
+    assert "Meeting is completed, so attendees are read-only." in detail_resp.text
+    assert "Meeting is completed, so tasks are read-only." in detail_resp.text
+    assert "Meeting is completed, so agenda is read-only." in detail_resp.text
+    assert 'id="attendee-add-button" type="submit" disabled' in detail_resp.text
+    assert 'id="task-add-button" type="submit" disabled' in detail_resp.text
+    assert 'id="agenda-add-button" type="submit" disabled' in detail_resp.text
 
     async with db.SessionMaker() as verify_session:
         refreshed_occ = (

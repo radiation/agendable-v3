@@ -15,13 +15,18 @@ from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.security_audit import audit_auth_denied, audit_auth_success
 from agendable.settings import get_settings
-from agendable.sso_oidc import oidc_enabled
-from agendable.web.routes.auth_oidc import router as auth_oidc_router
-from agendable.web.routes.auth_rate_limits import is_login_rate_limited, record_login_failure
+from agendable.web.routes.auth.oidc import router as auth_oidc_router
+from agendable.web.routes.auth.rate_limits import is_login_rate_limited, record_login_failure
 from agendable.web.routes.common import oauth, parse_timezone, templates
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
+
+
+def _auth_oidc_enabled() -> bool:
+    from agendable.web.routes import auth as auth_routes
+
+    return auth_routes.oidc_enabled()
 
 
 def is_bootstrap_admin_email(email: str) -> bool:
@@ -53,7 +58,7 @@ def render_login_template(
         {
             "error": error,
             "current_user": None,
-            "oidc_enabled": oidc_enabled(),
+            "oidc_enabled": _auth_oidc_enabled(),
         },
         status_code=status_code,
     )
@@ -138,7 +143,7 @@ async def render_profile_template(
             "current_user": user,
             "identities": identities,
             "identity_error": identity_error,
-            "oidc_enabled": oidc_enabled(),
+            "oidc_enabled": _auth_oidc_enabled(),
         },
         status_code=status_code,
     )

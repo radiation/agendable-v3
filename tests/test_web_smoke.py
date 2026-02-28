@@ -25,6 +25,29 @@ async def test_login_page_hides_oidc_when_disabled(
 
 
 @pytest.mark.asyncio
+async def test_profile_page_hides_oidc_link_when_disabled(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(auth_routes, "oidc_enabled", lambda: False)
+
+    await client.post(
+        "/signup",
+        data={
+            "first_name": "No",
+            "last_name": "SSO",
+            "timezone": "UTC",
+            "email": "no-sso-profile@example.com",
+            "password": "pw123456",
+        },
+        follow_redirects=True,
+    )
+
+    resp = await client.get("/profile")
+    assert resp.status_code == 200
+    assert "Link SSO account" not in resp.text
+
+
+@pytest.mark.asyncio
 async def test_signup_creates_user_and_sets_session(client: AsyncClient) -> None:
     resp = await client.post(
         "/signup",

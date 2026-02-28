@@ -3,126 +3,250 @@
 {% block title %}Agendable — Series{% endblock %}
 
 {% block content %}
-<section>
-    <h2>Meeting series</h2>
+<section class="stack-lg">
+    <div class="section-title">
+        <h2>Meeting series</h2>
+    </div>
 
     {% if not current_user %}
     <p><em>Sign in to create and view meeting series.</em></p>
     {% else %}
-    <form method="post" action="/series" class="form-grid">
-        <label>
-            Title
-            <input name="title" required />
-        </label>
+    <section class="section-card">
+        <h3>Create series</h3>
+        <form method="post" action="/series" class="form-grid">
+            <label>
+                Title
+                <input name="title" required />
+            </label>
 
-        <label>
-            Repeat
-            <select name="recurrence_freq" required>
-                <option value="DAILY">Daily</option>
-                <option value="WEEKLY">Weekly</option>
-                <option value="MONTHLY">Monthly</option>
-            </select>
-        </label>
-        <label>
-            Every
-            <input name="recurrence_interval" type="number" min="1" max="365" value="1" required />
-        </label>
-
-        <div class="group span-all">
-            <strong>Weekly days</strong>
-            <div class="options-row">
-                <label class="inline"><input type="checkbox" name="weekly_byday" value="MO" /> Mon</label>
-                <label class="inline"><input type="checkbox" name="weekly_byday" value="TU" /> Tue</label>
-                <label class="inline"><input type="checkbox" name="weekly_byday" value="WE" /> Wed</label>
-                <label class="inline"><input type="checkbox" name="weekly_byday" value="TH" /> Thu</label>
-                <label class="inline"><input type="checkbox" name="weekly_byday" value="FR" /> Fri</label>
-                <label class="inline"><input type="checkbox" name="weekly_byday" value="SA" /> Sat</label>
-                <label class="inline"><input type="checkbox" name="weekly_byday" value="SU" /> Sun</label>
-            </div>
-            <small><em>If none selected, defaults to the start date's weekday.</em></small>
-        </div>
-
-        <div class="group span-all">
-            <strong>Monthly</strong>
-            <div class="options-row">
-                <label class="inline">
-                    <input type="radio" name="monthly_mode" value="monthday" checked />
-                    On day
-                </label>
-                <input name="monthly_bymonthday" type="number" min="1" max="31" style="max-width: 6rem;" />
-            </div>
-            <div class="options-row">
-                <label class="inline">
-                    <input type="radio" name="monthly_mode" value="nth_weekday" />
-                    On
-                </label>
-                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="1" /> 1st</label>
-                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="2" /> 2nd</label>
-                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="3" /> 3rd</label>
-                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="4" /> 4th</label>
-                <label class="inline"><input type="checkbox" name="monthly_bysetpos" value="-1" /> Last</label>
-                <select name="monthly_byday">
-                    <option value="MO">Mon</option>
-                    <option value="TU">Tue</option>
-                    <option value="WE">Wed</option>
-                    <option value="TH">Thu</option>
-                    <option value="FR">Fri</option>
-                    <option value="SA">Sat</option>
-                    <option value="SU">Sun</option>
+            <label>
+                Repeat
+                <select id="recurrence-freq" name="recurrence_freq" required hx-get="/series/recurrence-options"
+                    hx-target="#recurrence-options" hx-swap="innerHTML">
+                    <option value="DAILY">Daily</option>
+                    <option value="WEEKLY">Weekly</option>
+                    <option value="MONTHLY">Monthly</option>
                 </select>
+            </label>
+            <label>
+                Every
+                <input name="recurrence_interval" type="number" min="1" max="365" value="1" required />
+            </label>
+
+            <div id="recurrence-options" class="span-all">
+                {% include "partials/series_recurrence_options.html" %}
             </div>
-            <small><em>"On day" defaults to the start date's day if blank.</em></small>
-        </div>
 
-        <label>
-            Time
-            <input name="recurrence_time" type="time" value="09:00" required />
-        </label>
-        <label>
-            Time zone
-            <select id="recurrence-timezone" name="recurrence_timezone" required>
-                {% set selected_tz = current_user.timezone if current_user and current_user.timezone else "UTC" %}
-                {% set ns = namespace(found=false) %}
-                {% for tz_value, tz_label in timezone_options %}
-                {% if tz_value == selected_tz %}{% set ns.found = true %}{% endif %}
-                <option value="{{ tz_value }}" {% if tz_value==selected_tz %}selected{% endif %}>{{ tz_label }}</option>
-                {% endfor %}
-                {% if selected_tz and not ns.found %}
-                <option value="{{ selected_tz }}" selected>{{ selected_tz }} (custom)</option>
-                {% endif %}
-            </select>
-        </label>
-        <label>
-            Start date
-            <input name="recurrence_start_date" type="date" required />
-        </label>
-        <label>
-            Generate
-            <input name="generate_count" type="number" min="1" max="200" value="10" required />
-        </label>
-        <label>
-            Reminder lead (minutes)
-            <input name="reminder_minutes_before" type="number" min="0" max="43200" value="60" required />
-        </label>
+            <label>
+                Time
+                <input name="recurrence_time" type="time" value="09:00" required />
+            </label>
+            <label>
+                Time zone
+                <select id="recurrence-timezone" name="recurrence_timezone" required>
+                    {% set selected_tz = current_user.timezone if current_user and current_user.timezone else "UTC" %}
+                    {% set ns = namespace(found=false) %}
+                    {% for tz_value, tz_label in timezone_options %}
+                    {% if tz_value == selected_tz %}{% set ns.found = true %}{% endif %}
+                    <option value="{{ tz_value }}" {% if tz_value==selected_tz %}selected{% endif %}>{{ tz_label }}
+                    </option>
+                    {% endfor %}
+                    {% if selected_tz and not ns.found %}
+                    <option value="{{ selected_tz }}" selected>{{ selected_tz }} (custom)</option>
+                    {% endif %}
+                </select>
+            </label>
+            <label>
+                Start date
+                <input name="recurrence_start_date" type="date" required />
+            </label>
+            <label>
+                Generate
+                <input name="generate_count" type="number" min="1" max="200" value="10" required />
+            </label>
+            <label>
+                Reminder lead (minutes)
+                <input name="reminder_minutes_before" type="number" min="0" max="43200" value="60" required />
+            </label>
+            <div class="span-all">
+                <label for="attendee-emails">Attendees</label>
+                <div class="typeahead">
+                    <input id="attendee-emails" name="attendee_emails" type="text"
+                        placeholder="Start typing name or email; separate with commas"
+                        hx-get="/series/attendee-suggestions" hx-trigger="keyup changed delay:250ms"
+                        hx-target="#attendee-suggestions" hx-swap="innerHTML"
+                        onblur="window.setTimeout(() => window.agendableClearAttendeeSuggestions(), 120)"
+                        autocomplete="off" />
+                    <div id="attendee-suggestions" class="typeahead-panel">
+                        {% include "partials/series_attendee_suggestions.html" %}
+                    </div>
+                </div>
+            </div>
 
-        <button type="submit">Create</button>
-    </form>
+            <button type="submit">Create</button>
+        </form>
+    </section>
 
-    <ul>
-        {% for s in series %}
-        <li>
-            <a href="/series/{{ s.id }}">{{ s.title }}</a>
-            <small>({{ series_recurrence.get(s.id, "") }})</small>
-        </li>
-        {% else %}
-        <li><em>No series yet. Create one above.</em></li>
-        {% endfor %}
-    </ul>
+    <section class="section-card">
+        <h3>Your series</h3>
+        <ul class="list-clean">
+            {% for s in series %}
+            <li>
+                <a href="/series/{{ s.id }}">{{ s.title }}</a>
+                <small>({{ series_recurrence.get(s.id, "") }})</small>
+            </li>
+            {% else %}
+            <li><em>No series yet. Create your first recurring meeting above, then open it to add agenda and tasks.</em>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
     {% endif %}
 </section>
 
 <script>
     (() => {
+        let attendeeSuggestionIndex = -1;
+
+        const getAttendeeSuggestionButtons = () => {
+            const container = document.getElementById("attendee-suggestions");
+            if (!container) {
+                return [];
+            }
+            return Array.from(container.querySelectorAll("button[data-attendee-email]"));
+        };
+
+        const setAttendeeSuggestionIndex = (index) => {
+            const buttons = getAttendeeSuggestionButtons();
+            attendeeSuggestionIndex = index;
+
+            buttons.forEach((button, buttonIndex) => {
+                button.classList.toggle("typeahead-active", buttonIndex === attendeeSuggestionIndex);
+            });
+
+            if (attendeeSuggestionIndex >= 0 && attendeeSuggestionIndex < buttons.length) {
+                buttons[attendeeSuggestionIndex].scrollIntoView({ block: "nearest" });
+            }
+        };
+
+        window.agendableClearAttendeeSuggestions = () => {
+            const suggestions = document.getElementById("attendee-suggestions");
+            if (suggestions) {
+                suggestions.innerHTML = "";
+            }
+            attendeeSuggestionIndex = -1;
+        };
+
+        window.agendableAddAttendeeEmail = (email) => {
+            const attendeesInput = document.getElementById("attendee-emails");
+            const suggestions = document.getElementById("attendee-suggestions");
+            if (!attendeesInput) return;
+
+            const normalizedEmail = String(email).toLowerCase();
+            const existing = attendeesInput.value
+                .split(",")
+                .map((value) => value.trim().toLowerCase())
+                .filter((value) => value.length > 0);
+
+            const isDuplicate = existing.includes(normalizedEmail);
+
+            if (!isDuplicate) {
+                const pieces = attendeesInput.value.split(",");
+                pieces[pieces.length - 1] = ` ${normalizedEmail}`;
+                attendeesInput.value = pieces
+                    .map((value) => value.trim())
+                    .filter((value) => value.length > 0)
+                    .join(", ");
+            }
+
+            attendeesInput.value = attendeesInput.value.replace(/\s*,\s*/g, ", ");
+            if (attendeesInput.value && !attendeesInput.value.endsWith(", ")) {
+                attendeesInput.value = `${attendeesInput.value}, `;
+            }
+
+            attendeesInput.focus();
+            if (suggestions) {
+                suggestions.innerHTML = "";
+            }
+        };
+
+        document.addEventListener("pointerdown", (event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) {
+                return;
+            }
+
+            const button = target.closest("button[data-attendee-email]");
+            if (!(button instanceof HTMLButtonElement)) {
+                return;
+            }
+
+            event.preventDefault();
+            const email = button.dataset.attendeeEmail;
+            if (!email) {
+                return;
+            }
+
+            window.agendableAddAttendeeEmail(email);
+        });
+
+        const attendeesInput = document.getElementById("attendee-emails");
+        if (attendeesInput instanceof HTMLInputElement) {
+            attendeesInput.addEventListener("keydown", (event) => {
+                const buttons = getAttendeeSuggestionButtons();
+                if (buttons.length == 0) {
+                    if (event.key === "Escape") {
+                        window.agendableClearAttendeeSuggestions();
+                    }
+                    return;
+                }
+
+                if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    const nextIndex =
+                        attendeeSuggestionIndex < 0
+                            ? 0
+                            : (attendeeSuggestionIndex + 1) % buttons.length;
+                    setAttendeeSuggestionIndex(nextIndex);
+                    return;
+                }
+
+                if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const nextIndex =
+                        attendeeSuggestionIndex < 0
+                            ? buttons.length - 1
+                            : (attendeeSuggestionIndex - 1 + buttons.length) % buttons.length;
+                    setAttendeeSuggestionIndex(nextIndex);
+                    return;
+                }
+
+                if (event.key === "Enter") {
+                    if (attendeeSuggestionIndex >= 0 && attendeeSuggestionIndex < buttons.length) {
+                        event.preventDefault();
+                        const email = buttons[attendeeSuggestionIndex].dataset.attendeeEmail;
+                        if (email) {
+                            window.agendableAddAttendeeEmail(email);
+                        }
+                    }
+                    return;
+                }
+
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    window.agendableClearAttendeeSuggestions();
+                }
+            });
+        }
+
+        document.body.addEventListener("htmx:afterSwap", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement) || target.id !== "attendee-suggestions") {
+                return;
+            }
+            attendeeSuggestionIndex = -1;
+        });
+
         const tzInput = document.getElementById("recurrence-timezone");
         if (!tzInput) return;
 

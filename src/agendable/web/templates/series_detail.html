@@ -3,40 +3,59 @@
 {% block title %}Agendable — {{ series.title }}{% endblock %}
 
 {% block content %}
-<p><a href="/">← Back</a></p>
+<a class="back-link" href="/">← Back</a>
 
-<section>
-    <h2>{{ series.title }}</h2>
-    <p><small>Repeats: {{ recurrence_label }}</small></p>
-    <p><small>Reminder lead: {{ series.reminder_minutes_before }} minutes before</small></p>
-</section>
+<section class="stack-lg">
+    <section class="section-card">
+        <h2>{{ series.title }}</h2>
+        <p><small>Repeats: {{ recurrence_label }}</small></p>
+        <p><small>Reminder lead: {{ series.reminder_minutes_before }} minutes before</small></p>
+        {% if active_occurrence %}
+        <div class="inline-actions">
+            <a href="/occurrences/{{ active_occurrence.id }}"><strong>Open active meeting</strong></a>
+            <span class="status-pill">Active</span>
+        </div>
+        {% endif %}
+    </section>
 
-<hr />
+    <section class="section-card">
+        <h3>Attendees</h3>
+        <form method="post" action="/series/{{ series.id }}/attendees" class="inline-form">
+            <label>
+                Add to all meetings by email
+                <input name="email" type="email" required value="{{ attendee_form.email if attendee_form else '' }}" />
+            </label>
+            <button type="submit">Add attendee</button>
+        </form>
+        {% if attendee_form_errors and attendee_form_errors.email %}
+        <p class="field-error">{{ attendee_form_errors.email }}</p>
+        {% endif %}
+    </section>
 
-<section>
-    <h3>Meetings</h3>
-    {% set display_tz = series.recurrence_timezone if series.recurrence_timezone else current_user.timezone %}
+    <section class="section-card">
+        <h3>Meetings</h3>
+        {% set display_tz = series.recurrence_timezone if series.recurrence_timezone else current_user.timezone %}
 
-    <form method="post" action="/series/{{ series.id }}/occurrences"
-        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
-        <label>
-            Scheduled at (UTC)
-            <input name="scheduled_at" type="datetime-local" required />
-        </label>
-        <button type="submit">Add meeting</button>
-    </form>
+        <form method="post" action="/series/{{ series.id }}/occurrences" class="inline-form">
+            <label>
+                Scheduled at (UTC)
+                <input name="scheduled_at" type="datetime-local" required />
+            </label>
+            <button type="submit">Add meeting</button>
+        </form>
 
-    <ul>
-        {% for o in occurrences %}
-        <li>
-            <a href="/occurrences/{{ o.id }}">{{ o.scheduled_at|format_dt(display_tz) }}</a>
-            {% if active_occurrence and o.id == active_occurrence.id %}
-            <strong>(active)</strong>
-            {% endif %}
-        </li>
-        {% else %}
-        <li><em>No meetings yet.</em></li>
-        {% endfor %}
-    </ul>
+        <ul class="list-clean">
+            {% for o in occurrences %}
+            <li>
+                <a href="/occurrences/{{ o.id }}">{{ o.scheduled_at|format_dt(display_tz) }}</a>
+                {% if active_occurrence and o.id == active_occurrence.id %}
+                <span class="status-pill">Active</span>
+                {% endif %}
+            </li>
+            {% else %}
+            <li><em>No meetings yet. Add one above to start capturing agenda and tasks.</em></li>
+            {% endfor %}
+        </ul>
+    </section>
 </section>
 {% endblock %}

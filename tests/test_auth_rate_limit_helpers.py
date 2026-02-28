@@ -9,7 +9,7 @@ from starlette.requests import Request
 from agendable.rate_limit import RateLimitRule, consume_rate_limit
 from agendable.services.oidc_service import is_email_allowed_for_domain, oidc_login_error_message
 from agendable.settings import Settings
-from agendable.web.routes.auth_rate_limits import (
+from agendable.web.routes.auth.rate_limits import (
     client_ip,
     is_identity_link_start_rate_limited,
     is_oidc_callback_rate_limited,

@@ -32,6 +32,7 @@ dev = [
 	"pytest-asyncio>=0.25.0",
 	"mypy>=1.10",
 	"ruff>=0.6",
+	"xenon>=0.9.3",
 	"types-python-dateutil>=2.9.0.20240316",
 ]
 

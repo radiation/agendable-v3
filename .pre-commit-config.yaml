@@ -20,9 +20,15 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: xenon
+        name: xenon (complexity)
+        entry: uv run xenon --max-absolute C --max-modules C --max-average C
+        language: system
+        types: [python]
+
       - id: pytest
         name: pytest
         entry: uv run pytest
         language: system
         pass_filenames: false
-        stages: [pre-commit, pre-push]
+        stages: [pre-push]
