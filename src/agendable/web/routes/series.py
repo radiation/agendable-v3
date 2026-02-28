@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -12,10 +12,9 @@ from starlette.responses import Response
 
 from agendable.auth import require_user
 from agendable.db import get_session
-from agendable.db.models import MeetingOccurrence, MeetingOccurrenceAttendee, MeetingSeries, User
+from agendable.db.models import MeetingOccurrence, MeetingOccurrenceAttendee, User
 from agendable.db.repos import MeetingOccurrenceRepository, MeetingSeriesRepository
 from agendable.logging_config import log_with_fields
-from agendable.recurrence import build_rrule
 from agendable.reminders import build_default_email_reminder
 from agendable.services import create_series_with_occurrences
 from agendable.settings import get_settings
@@ -27,210 +26,22 @@ from agendable.web.routes.common import (
     recurrence_label,
     templates,
 )
+from agendable.web.routes.series_helpers import (
+    add_missing_attendee_links,
+    autocomplete_needle,
+    build_normalized_rrule,
+    existing_attendee_occurrence_ids,
+    get_owned_series_or_404,
+    normalize_recurrence_freq,
+    parse_attendee_emails,
+    parse_monthly_bymonthday,
+    render_series_detail,
+    resolve_series_attendee_user,
+    validate_create_series_inputs,
+)
 
 router = APIRouter()
 logger = logging.getLogger("agendable.series")
-
-_VALID_RECURRENCE_FREQS = {"DAILY", "WEEKLY", "MONTHLY"}
-
-
-def _normalize_recurrence_freq(raw: str) -> str:
-    normalized = raw.strip().upper()
-    if normalized in _VALID_RECURRENCE_FREQS:
-        return normalized
-    return "DAILY"
-
-
-def _validate_create_series_inputs(
-    *,
-    reminder_minutes_before: int,
-    generate_count: int,
-    recurrence_interval: int,
-) -> None:
-    if reminder_minutes_before < 0 or reminder_minutes_before > 60 * 24 * 30:
-        raise HTTPException(
-            status_code=400,
-            detail="reminder_minutes_before must be between 0 and 43200",
-        )
-
-    if generate_count < 1 or generate_count > 200:
-        raise HTTPException(status_code=400, detail="generate_count must be between 1 and 200")
-
-    if recurrence_interval < 1 or recurrence_interval > 365:
-        raise HTTPException(status_code=400, detail="recurrence_interval must be between 1 and 365")
-
-
-def _parse_monthly_bymonthday(monthly_bymonthday: str | None) -> int | None:
-    if monthly_bymonthday is None or not monthly_bymonthday.strip():
-        return None
-
-    try:
-        return int(monthly_bymonthday)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid monthly day") from exc
-
-
-def _parse_attendee_emails(attendee_emails: str) -> list[str]:
-    parsed = [email.strip().lower() for email in attendee_emails.replace("\n", ",").split(",")]
-    unique: list[str] = []
-    for email in parsed:
-        if not email:
-            continue
-        if email not in unique:
-            unique.append(email)
-    return unique
-
-
-def _autocomplete_needle(*, q: str, attendee_emails: str) -> str:
-    query = q.strip()
-    if query:
-        return query.lower()
-
-    raw = attendee_emails.strip()
-    if not raw:
-        return ""
-
-    token = raw.split(",")[-1].strip()
-    return token.lower()
-
-
-def _build_normalized_rrule(
-    *,
-    recurrence_freq: str,
-    recurrence_interval: int,
-    dtstart: datetime,
-    weekly_byday: list[str],
-    monthly_mode: str,
-    monthly_bymonthday: int | None,
-    monthly_byday: str | None,
-    monthly_bysetpos: list[int],
-) -> str:
-    try:
-        return build_rrule(
-            freq=recurrence_freq,
-            interval=recurrence_interval,
-            dtstart=dtstart,
-            weekly_byday=weekly_byday,
-            monthly_mode=monthly_mode,
-            monthly_bymonthday=monthly_bymonthday,
-            monthly_byday=monthly_byday,
-            monthly_bysetpos=monthly_bysetpos,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid recurrence settings") from exc
-
-
-async def _render_series_detail(
-    *,
-    request: Request,
-    session: AsyncSession,
-    series_id: uuid.UUID,
-    current_user: User,
-    status_code: int = 200,
-    attendee_form: dict[str, str] | None = None,
-    attendee_form_errors: dict[str, str] | None = None,
-) -> HTMLResponse:
-    series_repo = MeetingSeriesRepository(session)
-    series = await series_repo.get_for_owner(series_id, current_user.id)
-    if series is None:
-        raise HTTPException(status_code=404)
-
-    occ_repo = MeetingOccurrenceRepository(session)
-    occurrences = await occ_repo.list_for_series(series_id)
-
-    active_occurrence: MeetingOccurrence | None = None
-    now = datetime.now(UTC)
-    for o in occurrences:
-        scheduled_at = o.scheduled_at
-        if scheduled_at.tzinfo is None:
-            scheduled_at = scheduled_at.replace(tzinfo=UTC)
-        if scheduled_at >= now:
-            active_occurrence = o
-            break
-    if active_occurrence is None and occurrences:
-        active_occurrence = occurrences[-1]
-
-    selected_attendee_form = {"email": ""}
-    if attendee_form is not None:
-        selected_attendee_form.update(attendee_form)
-
-    return templates.TemplateResponse(
-        request,
-        "series_detail.html",
-        {
-            "series": series,
-            "recurrence_label": recurrence_label(
-                recurrence_rrule=series.recurrence_rrule,
-                recurrence_dtstart=series.recurrence_dtstart,
-                recurrence_timezone=series.recurrence_timezone,
-                default_interval_days=series.default_interval_days,
-            ),
-            "occurrences": occurrences,
-            "active_occurrence": active_occurrence,
-            "attendee_form": selected_attendee_form,
-            "attendee_form_errors": attendee_form_errors or {},
-            "current_user": current_user,
-        },
-        status_code=status_code,
-    )
-
-
-async def _get_owned_series_or_404(
-    session: AsyncSession,
-    series_id: uuid.UUID,
-    owner_user_id: uuid.UUID,
-) -> MeetingSeries:
-    series_repo = MeetingSeriesRepository(session)
-    series = await series_repo.get_for_owner(series_id, owner_user_id)
-    if series is None:
-        raise HTTPException(status_code=404)
-    return series
-
-
-async def _resolve_series_attendee_user(
-    session: AsyncSession,
-    email: str,
-) -> User | None:
-    result = await session.execute(select(User).where(User.email == email))
-    return result.scalar_one_or_none()
-
-
-async def _existing_attendee_occurrence_ids(
-    *,
-    session: AsyncSession,
-    attendee_user_id: uuid.UUID,
-    occurrence_ids: list[uuid.UUID],
-) -> set[uuid.UUID]:
-    if not occurrence_ids:
-        return set()
-
-    existing_links = (
-        await session.execute(
-            select(MeetingOccurrenceAttendee.occurrence_id).where(
-                MeetingOccurrenceAttendee.user_id == attendee_user_id,
-                MeetingOccurrenceAttendee.occurrence_id.in_(occurrence_ids),
-            )
-        )
-    ).scalars()
-    return set(existing_links)
-
-
-def _add_missing_attendee_links(
-    *,
-    session: AsyncSession,
-    attendee_user_id: uuid.UUID,
-    occurrence_ids: list[uuid.UUID],
-    existing_occurrence_ids: set[uuid.UUID],
-) -> int:
-    added_count = 0
-    for occurrence_id in occurrence_ids:
-        if occurrence_id in existing_occurrence_ids:
-            continue
-        session.add(
-            MeetingOccurrenceAttendee(occurrence_id=occurrence_id, user_id=attendee_user_id)
-        )
-        added_count += 1
-    return added_count
 
 
 @router.get("/", response_class=Response)
@@ -270,7 +81,7 @@ async def series_recurrence_options(
     recurrence_freq: str = "DAILY",
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    selected = _normalize_recurrence_freq(recurrence_freq)
+    selected = normalize_recurrence_freq(recurrence_freq)
     return templates.TemplateResponse(
         request,
         "partials/series_recurrence_options.html",
@@ -289,7 +100,7 @@ async def series_attendee_suggestions(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    needle = _autocomplete_needle(q=q, attendee_emails=attendee_emails)
+    needle = autocomplete_needle(q=q, attendee_emails=attendee_emails)
     users: list[User] = []
     if len(needle) >= 2:
         pattern = f"%{needle}%"
@@ -343,7 +154,7 @@ async def create_series(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> RedirectResponse:
-    _validate_create_series_inputs(
+    validate_create_series_inputs(
         reminder_minutes_before=reminder_minutes_before,
         generate_count=generate_count,
         recurrence_interval=recurrence_interval,
@@ -354,9 +165,9 @@ async def create_series(
     tz = parse_timezone(recurrence_timezone)
     dtstart = datetime.combine(start_date, start_time).replace(tzinfo=tz)
 
-    bymonthday = _parse_monthly_bymonthday(monthly_bymonthday)
+    bymonthday = parse_monthly_bymonthday(monthly_bymonthday)
 
-    normalized_rrule = _build_normalized_rrule(
+    normalized_rrule = build_normalized_rrule(
         recurrence_freq=recurrence_freq,
         recurrence_interval=recurrence_interval,
         dtstart=dtstart,
@@ -384,7 +195,7 @@ async def create_series(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     attendee_user_ids: set[uuid.UUID] = {current_user.id}
-    parsed_attendee_emails = _parse_attendee_emails(attendee_emails)
+    parsed_attendee_emails = parse_attendee_emails(attendee_emails)
     if parsed_attendee_emails:
         attendee_users = (
             (await session.execute(select(User).where(User.email.in_(parsed_attendee_emails))))
@@ -437,7 +248,7 @@ async def series_detail(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
-    return await _render_series_detail(
+    return await render_series_detail(
         request=request,
         session=session,
         series_id=series_id,
@@ -453,7 +264,7 @@ async def add_series_attendee(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> Response:
-    await _get_owned_series_or_404(session, series_id, current_user.id)
+    await get_owned_series_or_404(session, series_id, current_user.id)
 
     normalized_email = email.strip().lower()
     attendee_form = {"email": normalized_email}
@@ -464,12 +275,12 @@ async def add_series_attendee(
 
     attendee_user: User | None = None
     if not attendee_form_errors:
-        attendee_user = await _resolve_series_attendee_user(session, normalized_email)
+        attendee_user = await resolve_series_attendee_user(session, normalized_email)
         if attendee_user is None:
             attendee_form_errors["email"] = "No user found with that email."
 
     if attendee_form_errors:
-        return await _render_series_detail(
+        return await render_series_detail(
             request=request,
             session=session,
             series_id=series_id,
@@ -486,12 +297,12 @@ async def add_series_attendee(
     occurrences = await occ_repo.list_for_series(series_id)
     occurrence_ids = [occ.id for occ in occurrences]
 
-    existing_occurrence_ids = await _existing_attendee_occurrence_ids(
+    existing_occurrence_ids = await existing_attendee_occurrence_ids(
         session=session,
         attendee_user_id=attendee_user.id,
         occurrence_ids=occurrence_ids,
     )
-    added_count = _add_missing_attendee_links(
+    added_count = add_missing_attendee_links(
         session=session,
         attendee_user_id=attendee_user.id,
         occurrence_ids=occurrence_ids,

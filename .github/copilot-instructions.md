@@ -17,6 +17,7 @@ This repo is a Python web app for tracking agenda items and tasks for recurring 
 - Validate inputs using Pydantic models or FastAPI form params.
 - Maintain strict typing (`mypy --strict`) and lint/format with Ruff.
 - Do not add heavy frontend frameworks; HTMX-first. Alpine.js may be introduced later.
+- For refactors that move/delete files, prefer `git mv` and `git rm` when possible to preserve clearer history and rename tracking.
 
 ## UX constraints
 
