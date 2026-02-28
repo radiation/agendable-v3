@@ -48,13 +48,17 @@ def _base_task_form(
 ) -> dict[str, str]:
     return {
         "title": "",
+        "description": "",
         "assigned_user_id": "",
         "due_at": task_due_default_value,
     }
 
 
 def _base_agenda_form() -> dict[str, str]:
-    return {"body": ""}
+    return {
+        "body": "",
+        "description": "",
+    }
 
 
 def _base_attendee_form() -> dict[str, str]:
@@ -67,6 +71,15 @@ def _ensure_occurrence_writable(occurrence_id: uuid.UUID, is_completed: bool) ->
             status_code=400,
             detail=f"Meeting {occurrence_id} is completed and read-only",
         )
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized
 
 
 async def _get_owned_occurrence(
@@ -335,6 +348,7 @@ async def create_task(
     request: Request,
     occurrence_id: uuid.UUID,
     title: str = Form(...),
+    description_input: str | None = Form(None, alias="description"),
     due_at_input: str | None = Form(None, alias="due_at"),
     assigned_user_id: uuid.UUID | None = Form(None),
     session: AsyncSession = Depends(get_session),
@@ -348,6 +362,7 @@ async def create_task(
     task_form_errors: dict[str, str] = {}
     task_form = {
         "title": normalized_title,
+        "description": description_input or "",
         "assigned_user_id": str(assigned_user_id) if assigned_user_id is not None else "",
         "due_at": due_at_input or "",
     }
@@ -363,6 +378,7 @@ async def create_task(
     )
 
     final_assignee_id = assigned_user_id or current_user.id
+    normalized_description = _normalize_optional_text(description_input)
     await _validate_task_assignee(
         session=session,
         occurrence_id=occurrence_id,
@@ -386,6 +402,7 @@ async def create_task(
     task = Task(
         occurrence_id=occurrence_id,
         title=normalized_title,
+        description=normalized_description,
         assigned_user_id=final_assignee_id,
         due_at=final_due_at,
     )
@@ -522,6 +539,7 @@ async def add_agenda_item(
     request: Request,
     occurrence_id: uuid.UUID,
     body: str = Form(...),
+    description_input: str | None = Form(None, alias="description"),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> Response:
@@ -530,6 +548,7 @@ async def add_agenda_item(
     _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
 
     normalized_body = body.strip()
+    normalized_description = _normalize_optional_text(description_input)
     if not normalized_body:
         return await _render_occurrence_detail(
             request=request,
@@ -538,11 +557,15 @@ async def add_agenda_item(
             series=series,
             current_user=current_user,
             status_code=400,
-            agenda_form={"body": body},
+            agenda_form={"body": body, "description": description_input or ""},
             agenda_form_errors={"body": "Agenda item is required."},
         )
 
-    item = AgendaItem(occurrence_id=occurrence_id, body=normalized_body)
+    item = AgendaItem(
+        occurrence_id=occurrence_id,
+        body=normalized_body,
+        description=normalized_description,
+    )
     session.add(item)
     await session.commit()
 
@@ -557,6 +580,73 @@ async def add_agenda_item(
 
     return RedirectResponse(
         url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence_id)),
+        status_code=303,
+    )
+
+
+@router.post("/agenda/{item_id}/convert-to-task", response_class=RedirectResponse)
+async def convert_agenda_item_to_task(
+    request: Request,
+    item_id: uuid.UUID,
+    assigned_user_id: uuid.UUID = Form(...),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> RedirectResponse:
+    agenda_repo = AgendaItemRepository(session)
+    item = await agenda_repo.get_by_id(item_id)
+    if item is None:
+        raise HTTPException(status_code=404)
+
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrence = await occ_repo.get_by_id(item.occurrence_id)
+    if occurrence is None:
+        raise HTTPException(status_code=404)
+
+    await _ensure_occurrence_owner(session, occurrence, current_user.id)
+    _ensure_occurrence_writable(occurrence.id, occurrence.is_completed)
+
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.get_for_owner(occurrence.series_id, current_user.id)
+    if series is None:
+        raise HTTPException(status_code=404)
+
+    assignee_errors: dict[str, str] = {}
+    await _validate_task_assignee(
+        session=session,
+        occurrence_id=occurrence.id,
+        series_owner_user_id=series.owner_user_id,
+        assignee_id=assigned_user_id,
+        task_form_errors=assignee_errors,
+    )
+    if assignee_errors:
+        raise HTTPException(status_code=400, detail=assignee_errors["assigned_user_id"])
+
+    due_at = await _get_default_task_due_at(session, occurrence)
+    title = item.body.strip() if item.body.strip() else "Agenda follow-up"
+    task = Task(
+        occurrence_id=occurrence.id,
+        title=title,
+        description=item.description,
+        assigned_user_id=assigned_user_id,
+        due_at=due_at,
+    )
+    item.is_done = True
+    session.add(task)
+    await session.commit()
+
+    log_with_fields(
+        logger,
+        logging.INFO,
+        "agenda item converted to task",
+        user_id=current_user.id,
+        occurrence_id=occurrence.id,
+        agenda_item_id=item.id,
+        task_id=task.id,
+        assigned_user_id=assigned_user_id,
+    )
+
+    return RedirectResponse(
+        url=request.app.url_path_for("occurrence_detail", occurrence_id=str(occurrence.id)),
         status_code=303,
     )
 

@@ -42,7 +42,7 @@ async def test_task_create_and_toggle_is_scoped(
 
     resp = await client.post(
         f"/occurrences/{occ.id}/tasks",
-        data={"title": "Do the thing"},
+        data={"title": "Do the thing", "description": "Task details"},
         follow_redirects=True,
     )
     assert resp.status_code == 200
@@ -53,6 +53,7 @@ async def test_task_create_and_toggle_is_scoped(
         )
     ).scalar_one()
     assert task.is_done is False
+    assert task.description == "Task details"
     assert task.assigned_user_id == series.owner_user_id
     assert task.due_at == occ.scheduled_at
     task_id = task.id
@@ -103,7 +104,7 @@ async def test_agenda_add_and_toggle_is_scoped(
 
     resp = await client.post(
         f"/occurrences/{occ.id}/agenda",
-        data={"body": "Talk about priorities"},
+        data={"body": "Talk about priorities", "description": "Agenda context"},
         follow_redirects=True,
     )
     assert resp.status_code == 200
@@ -116,6 +117,7 @@ async def test_agenda_add_and_toggle_is_scoped(
         )
     ).scalar_one()
     assert item.is_done is False
+    assert item.description == "Agenda context"
     item_id = item.id
 
     resp = await client.post(f"/agenda/{item.id}/toggle", follow_redirects=True)
@@ -556,3 +558,150 @@ async def test_attendee_form_shows_inline_validation_for_blank_email(
 
     assert resp.status_code == 400
     assert "Attendee email is required." in resp.text
+
+
+@pytest.mark.asyncio
+async def test_convert_agenda_item_to_task_assigns_attendee_and_marks_done(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Convert Agenda {uuid.uuid4()}",
+    )
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    bob = User(
+        email=f"convert-bob-{uuid.uuid4()}@example.com",
+        first_name="Bob",
+        last_name="Convert",
+        display_name="Bob Convert",
+        timezone="UTC",
+        password_hash=None,
+    )
+    db_session.add(bob)
+    await db_session.commit()
+    await db_session.refresh(bob)
+
+    add_attendee_resp = await client.post(
+        f"/occurrences/{occ.id}/attendees",
+        data={"email": bob.email},
+        follow_redirects=False,
+    )
+    assert add_attendee_resp.status_code == 303
+
+    agenda = AgendaItem(
+        occurrence_id=occ.id,
+        body="Discuss migration plan",
+        description="Break it into milestones",
+        is_done=False,
+    )
+    db_session.add(agenda)
+    await db_session.commit()
+    await db_session.refresh(agenda)
+
+    convert_resp = await client.post(
+        f"/agenda/{agenda.id}/convert-to-task",
+        data={"assigned_user_id": str(bob.id)},
+        follow_redirects=False,
+    )
+    assert convert_resp.status_code == 303
+
+    converted_task = (
+        await db_session.execute(
+            select(Task).where(
+                Task.occurrence_id == occ.id,
+                Task.title == "Discuss migration plan",
+            )
+        )
+    ).scalar_one()
+    assert converted_task.assigned_user_id == bob.id
+    assert converted_task.description == "Break it into milestones"
+
+    async with db.SessionMaker() as verify_session:
+        refreshed_agenda = (
+            await verify_session.execute(select(AgendaItem).where(AgendaItem.id == agenda.id))
+        ).scalar_one()
+        assert refreshed_agenda.is_done is True
+
+
+@pytest.mark.asyncio
+async def test_convert_agenda_item_to_task_rejects_non_attendee_assignee(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    series = await create_series(
+        client,
+        db_session,
+        owner_email="alice@example.com",
+        title=f"Convert Guardrail {uuid.uuid4()}",
+    )
+
+    occ = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence)
+                .where(MeetingOccurrence.series_id == series.id)
+                .order_by(MeetingOccurrence.scheduled_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert occ is not None
+
+    outsider = User(
+        email=f"outsider-{uuid.uuid4()}@example.com",
+        first_name="Out",
+        last_name="Sider",
+        display_name="Out Sider",
+        timezone="UTC",
+        password_hash=None,
+    )
+    db_session.add(outsider)
+
+    agenda = AgendaItem(occurrence_id=occ.id, body="Should not convert", is_done=False)
+    db_session.add(agenda)
+    await db_session.commit()
+    await db_session.refresh(outsider)
+    await db_session.refresh(agenda)
+
+    convert_resp = await client.post(
+        f"/agenda/{agenda.id}/convert-to-task",
+        data={"assigned_user_id": str(outsider.id)},
+        follow_redirects=False,
+    )
+    assert convert_resp.status_code == 400
+    assert convert_resp.json()["detail"] == "Assignee must be a meeting attendee."
+
+    created_tasks = (
+        (
+            await db_session.execute(
+                select(Task).where(
+                    Task.occurrence_id == occ.id,
+                    Task.title == "Should not convert",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert created_tasks == []
