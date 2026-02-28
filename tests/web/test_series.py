@@ -8,7 +8,14 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.db.models import MeetingOccurrence, MeetingSeries, Reminder, ReminderChannel, User
+from agendable.db.models import (
+    MeetingOccurrence,
+    MeetingOccurrenceAttendee,
+    MeetingSeries,
+    Reminder,
+    ReminderChannel,
+    User,
+)
 from agendable.testing.web_test_helpers import login_user
 from agendable.web.routes import series as series_routes
 
@@ -129,6 +136,157 @@ async def test_create_series_generates_occurrences(
     )
 
     assert len(occs) == 3
+
+
+@pytest.mark.asyncio
+async def test_create_series_auto_adds_owner_as_attendee_to_generated_occurrences(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    title = f"Owner attendee {uuid.uuid4()}"
+    resp = await client.post(
+        "/series",
+        data={
+            "title": title,
+            "reminder_minutes_before": 60,
+            "recurrence_start_date": "2030-01-01",
+            "recurrence_time": "09:00",
+            "recurrence_timezone": "UTC",
+            "recurrence_freq": "DAILY",
+            "recurrence_interval": 1,
+            "generate_count": 2,
+        },
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+
+    alice = (
+        await db_session.execute(select(User).where(User.email == "alice@example.com"))
+    ).scalar_one()
+    series = (
+        await db_session.execute(
+            select(MeetingSeries).where(
+                MeetingSeries.owner_user_id == alice.id,
+                MeetingSeries.title == title,
+            )
+        )
+    ).scalar_one()
+
+    occurrences = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence.id).where(MeetingOccurrence.series_id == series.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    owner_links = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrenceAttendee).where(
+                    MeetingOccurrenceAttendee.user_id == alice.id,
+                    MeetingOccurrenceAttendee.occurrence_id.in_(occurrences),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert len(owner_links) == len(occurrences) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_series_adds_entered_attendees_to_generated_occurrences(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await login_user(client, "teammate@example.com", "pw-teammate")
+    await client.post("/logout", follow_redirects=True)
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    title = f"Create attendee emails {uuid.uuid4()}"
+    resp = await client.post(
+        "/series",
+        data={
+            "title": title,
+            "reminder_minutes_before": 60,
+            "recurrence_start_date": "2030-01-01",
+            "recurrence_time": "09:00",
+            "recurrence_timezone": "UTC",
+            "recurrence_freq": "DAILY",
+            "recurrence_interval": 1,
+            "attendee_emails": "teammate@example.com",
+            "generate_count": 2,
+        },
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+
+    alice = (
+        await db_session.execute(select(User).where(User.email == "alice@example.com"))
+    ).scalar_one()
+    teammate = (
+        await db_session.execute(select(User).where(User.email == "teammate@example.com"))
+    ).scalar_one()
+    series = (
+        await db_session.execute(
+            select(MeetingSeries).where(
+                MeetingSeries.owner_user_id == alice.id,
+                MeetingSeries.title == title,
+            )
+        )
+    ).scalar_one()
+
+    occurrences = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence.id).where(MeetingOccurrence.series_id == series.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    teammate_links = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrenceAttendee).where(
+                    MeetingOccurrenceAttendee.user_id == teammate.id,
+                    MeetingOccurrenceAttendee.occurrence_id.in_(occurrences),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert len(teammate_links) == len(occurrences) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_series_rejects_unknown_attendee_email(client: AsyncClient) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    resp = await client.post(
+        "/series",
+        data={
+            "title": "Unknown attendee",
+            "reminder_minutes_before": 60,
+            "recurrence_start_date": "2030-01-01",
+            "recurrence_time": "09:00",
+            "recurrence_timezone": "UTC",
+            "recurrence_freq": "DAILY",
+            "recurrence_interval": 1,
+            "attendee_emails": "unknown@example.com",
+            "generate_count": 1,
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Unknown attendee email(s): unknown@example.com"
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -565,3 +723,183 @@ async def test_series_recurrence_options_renders_mode_specific_controls(
     fallback = await client.get("/series/recurrence-options?recurrence_freq=UNKNOWN")
     assert fallback.status_code == 200
     assert "Daily recurrence does not require extra options." in fallback.text
+
+
+@pytest.mark.asyncio
+async def test_series_attendee_suggestions_requires_auth(client: AsyncClient) -> None:
+    resp = await client.get("/series/attendee-suggestions?q=al")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_series_attendee_suggestions_returns_matching_users(client: AsyncClient) -> None:
+    await login_user(
+        client, "teammate@example.com", "pw-teammate", first_name="Team", last_name="Mate"
+    )
+    await client.post("/logout", follow_redirects=True)
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    resp = await client.get("/series/attendee-suggestions?q=team")
+    assert resp.status_code == 200
+    assert "teammate@example.com" in resp.text
+    assert "alice@example.com" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_series_attendee_suggestions_ignores_short_queries(client: AsyncClient) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    resp = await client.get("/series/attendee-suggestions?q=a")
+    assert resp.status_code == 200
+    assert "Type at least 2 characters to search users." in resp.text
+
+
+@pytest.mark.asyncio
+async def test_series_attendee_suggestions_uses_last_attendee_token(client: AsyncClient) -> None:
+    await login_user(
+        client, "teammate@example.com", "pw-teammate", first_name="Team", last_name="Mate"
+    )
+    await client.post("/logout", follow_redirects=True)
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    resp = await client.get(
+        "/series/attendee-suggestions",
+        params={"attendee_emails": "first@example.com, tea"},
+    )
+    assert resp.status_code == 200
+    assert "teammate@example.com" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_add_series_attendee_adds_to_all_occurrences_and_is_idempotent(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    title = f"Series attendees {uuid.uuid4()}"
+    create_resp = await client.post(
+        "/series",
+        data={
+            "title": title,
+            "reminder_minutes_before": 60,
+            "recurrence_start_date": "2030-01-01",
+            "recurrence_time": "09:00",
+            "recurrence_timezone": "UTC",
+            "recurrence_freq": "DAILY",
+            "recurrence_interval": 1,
+            "generate_count": 3,
+        },
+        follow_redirects=True,
+    )
+    assert create_resp.status_code == 200
+
+    alice = (
+        await db_session.execute(select(User).where(User.email == "alice@example.com"))
+    ).scalar_one()
+    series = (
+        await db_session.execute(
+            select(MeetingSeries).where(
+                MeetingSeries.owner_user_id == alice.id,
+                MeetingSeries.title == title,
+            )
+        )
+    ).scalar_one()
+
+    first = await client.post(
+        f"/series/{series.id}/attendees",
+        data={"email": "alice@example.com"},
+        follow_redirects=False,
+    )
+    assert first.status_code == 303
+
+    second = await client.post(
+        f"/series/{series.id}/attendees",
+        data={"email": "alice@example.com"},
+        follow_redirects=False,
+    )
+    assert second.status_code == 303
+
+    occurrence_count = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrence.id).where(MeetingOccurrence.series_id == series.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    links = (
+        (
+            await db_session.execute(
+                select(MeetingOccurrenceAttendee).where(
+                    MeetingOccurrenceAttendee.user_id == alice.id,
+                    MeetingOccurrenceAttendee.occurrence_id.in_(occurrence_count),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    assert len(links) == len(occurrence_count) == 3
+
+
+@pytest.mark.asyncio
+async def test_add_series_attendee_shows_inline_validation_error(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    title = f"Series attendee validation {uuid.uuid4()}"
+    create_resp = await client.post(
+        "/series",
+        data={
+            "title": title,
+            "reminder_minutes_before": 60,
+            "recurrence_start_date": "2030-01-01",
+            "recurrence_time": "09:00",
+            "recurrence_timezone": "UTC",
+            "recurrence_freq": "DAILY",
+            "recurrence_interval": 1,
+            "generate_count": 1,
+        },
+        follow_redirects=True,
+    )
+    assert create_resp.status_code == 200
+
+    alice = (
+        await db_session.execute(select(User).where(User.email == "alice@example.com"))
+    ).scalar_one()
+    series = (
+        await db_session.execute(
+            select(MeetingSeries).where(
+                MeetingSeries.owner_user_id == alice.id,
+                MeetingSeries.title == title,
+            )
+        )
+    ).scalar_one()
+
+    resp = await client.post(
+        f"/series/{series.id}/attendees",
+        data={"email": "nobody@example.com"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 400
+    assert "No user found with that email." in resp.text
+    assert 'value="nobody@example.com"' in resp.text
+
+
+@pytest.mark.asyncio
+async def test_add_series_attendee_404_when_series_not_owned(client: AsyncClient) -> None:
+    await login_user(client, "alice@example.com", "pw-alice")
+
+    resp = await client.post(
+        f"/series/{uuid.uuid4()}/attendees",
+        data={"email": "bob@example.com"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 404

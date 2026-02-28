@@ -1,0 +1,17 @@
+{% if query|trim|length >= 2 and users %}
+<ul
+    style="list-style: none; margin: 0; padding: .25rem; border: 1px solid; border-radius: .375rem; max-height: 14rem; overflow-y: auto;">
+    {% for user in users %}
+    <li>
+        <button type="button" onclick="window.agendableAddAttendeeEmail({{ user.email|tojson }})"
+            style="display: block; width: 100%; text-align: left; padding: .375rem .5rem; border: 0; background: transparent;">
+            {{ user.display_name }} ({{ user.email }})
+        </button>
+    </li>
+    {% endfor %}
+</ul>
+{% elif query|trim|length >= 2 %}
+<p style="margin: 0; padding: .5rem; border: 1px solid; border-radius: .375rem;"><small>No matching users found.</small></p>
+{% else %}
+<p style="margin: 0;"><small>Type at least 2 characters to search users.</small></p>
+{% endif %}

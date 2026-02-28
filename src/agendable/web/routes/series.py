@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from agendable.auth import require_user
 from agendable.db import get_session
-from agendable.db.models import MeetingOccurrence, User
+from agendable.db.models import MeetingOccurrence, MeetingOccurrenceAttendee, User
 from agendable.db.repos import MeetingOccurrenceRepository, MeetingSeriesRepository
 from agendable.logging_config import log_with_fields
 from agendable.recurrence import build_rrule
@@ -69,6 +70,30 @@ def _parse_monthly_bymonthday(monthly_bymonthday: str | None) -> int | None:
         raise HTTPException(status_code=400, detail="Invalid monthly day") from exc
 
 
+def _parse_attendee_emails(attendee_emails: str) -> list[str]:
+    parsed = [email.strip().lower() for email in attendee_emails.replace("\n", ",").split(",")]
+    unique: list[str] = []
+    for email in parsed:
+        if not email:
+            continue
+        if email not in unique:
+            unique.append(email)
+    return unique
+
+
+def _autocomplete_needle(*, q: str, attendee_emails: str) -> str:
+    query = q.strip()
+    if query:
+        return query.lower()
+
+    raw = attendee_emails.strip()
+    if not raw:
+        return ""
+
+    token = raw.split(",")[-1].strip()
+    return token.lower()
+
+
 def _build_normalized_rrule(
     *,
     recurrence_freq: str,
@@ -93,6 +118,61 @@ def _build_normalized_rrule(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid recurrence settings") from exc
+
+
+async def _render_series_detail(
+    *,
+    request: Request,
+    session: AsyncSession,
+    series_id: uuid.UUID,
+    current_user: User,
+    status_code: int = 200,
+    attendee_form: dict[str, str] | None = None,
+    attendee_form_errors: dict[str, str] | None = None,
+) -> HTMLResponse:
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.get_for_owner(series_id, current_user.id)
+    if series is None:
+        raise HTTPException(status_code=404)
+
+    occ_repo = MeetingOccurrenceRepository(session)
+    occurrences = await occ_repo.list_for_series(series_id)
+
+    active_occurrence: MeetingOccurrence | None = None
+    now = datetime.now(UTC)
+    for o in occurrences:
+        scheduled_at = o.scheduled_at
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=UTC)
+        if scheduled_at >= now:
+            active_occurrence = o
+            break
+    if active_occurrence is None and occurrences:
+        active_occurrence = occurrences[-1]
+
+    selected_attendee_form = {"email": ""}
+    if attendee_form is not None:
+        selected_attendee_form.update(attendee_form)
+
+    return templates.TemplateResponse(
+        request,
+        "series_detail.html",
+        {
+            "series": series,
+            "recurrence_label": recurrence_label(
+                recurrence_rrule=series.recurrence_rrule,
+                recurrence_dtstart=series.recurrence_dtstart,
+                recurrence_timezone=series.recurrence_timezone,
+                default_interval_days=series.default_interval_days,
+            ),
+            "occurrences": occurrences,
+            "active_occurrence": active_occurrence,
+            "attendee_form": selected_attendee_form,
+            "attendee_form_errors": attendee_form_errors or {},
+            "current_user": current_user,
+        },
+        status_code=status_code,
+    )
 
 
 @router.get("/", response_class=Response)
@@ -143,6 +223,49 @@ async def series_recurrence_options(
     )
 
 
+@router.get("/series/attendee-suggestions", response_class=HTMLResponse)
+async def series_attendee_suggestions(
+    request: Request,
+    q: str = "",
+    attendee_emails: str = "",
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> HTMLResponse:
+    needle = _autocomplete_needle(q=q, attendee_emails=attendee_emails)
+    users: list[User] = []
+    if len(needle) >= 2:
+        pattern = f"%{needle}%"
+        users = list(
+            (
+                await session.execute(
+                    select(User)
+                    .where(
+                        User.is_active.is_(True),
+                        User.id != current_user.id,
+                        or_(
+                            func.lower(User.email).like(pattern),
+                            func.lower(User.display_name).like(pattern),
+                        ),
+                    )
+                    .order_by(User.display_name.asc(), User.email.asc())
+                    .limit(8)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "partials/series_attendee_suggestions.html",
+        {
+            "users": users,
+            "query": needle,
+            "current_user": current_user,
+        },
+    )
+
+
 @router.post("/series", response_class=RedirectResponse)
 async def create_series(
     title: str = Form(...),
@@ -157,6 +280,7 @@ async def create_series(
     monthly_bymonthday: str | None = Form(None),
     monthly_byday: str | None = Form(None),
     monthly_bysetpos: list[int] = Form([]),
+    attendee_emails: str = Form(""),
     generate_count: int = Form(10),
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
@@ -201,6 +325,37 @@ async def create_series(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    attendee_user_ids: set[uuid.UUID] = {current_user.id}
+    parsed_attendee_emails = _parse_attendee_emails(attendee_emails)
+    if parsed_attendee_emails:
+        attendee_users = (
+            (await session.execute(select(User).where(User.email.in_(parsed_attendee_emails))))
+            .scalars()
+            .all()
+        )
+        attendee_users_by_email = {user.email.lower(): user for user in attendee_users}
+        unknown_attendee_emails = [
+            email for email in parsed_attendee_emails if email not in attendee_users_by_email
+        ]
+        if unknown_attendee_emails:
+            raise HTTPException(
+                status_code=400,
+                detail=("Unknown attendee email(s): " + ", ".join(unknown_attendee_emails)),
+            )
+
+        attendee_user_ids.update(user.id for user in attendee_users)
+
+    for occurrence in occurrences:
+        for attendee_user_id in attendee_user_ids:
+            session.add(
+                MeetingOccurrenceAttendee(
+                    occurrence_id=occurrence.id,
+                    user_id=attendee_user_id,
+                )
+            )
+
+    await session.commit()
+
     log_with_fields(
         logger,
         logging.INFO,
@@ -208,6 +363,7 @@ async def create_series(
         user_id=current_user.id,
         series_id=series.id,
         occurrence_count=len(occurrences),
+        attendee_count=len(attendee_user_ids),
         reminder_minutes_before=series.reminder_minutes_before,
         recurrence_freq=recurrence_freq,
         recurrence_interval=recurrence_interval,
@@ -223,41 +379,96 @@ async def series_detail(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> HTMLResponse:
+    return await _render_series_detail(
+        request=request,
+        session=session,
+        series_id=series_id,
+        current_user=current_user,
+    )
+
+
+@router.post("/series/{series_id}/attendees", response_class=RedirectResponse)
+async def add_series_attendee(
+    request: Request,
+    series_id: uuid.UUID,
+    email: str = Form(...),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(require_user),
+) -> Response:
     series_repo = MeetingSeriesRepository(session)
     series = await series_repo.get_for_owner(series_id, current_user.id)
     if series is None:
         raise HTTPException(status_code=404)
 
+    normalized_email = email.strip().lower()
+    attendee_form = {"email": normalized_email}
+    attendee_form_errors: dict[str, str] = {}
+
+    if not normalized_email:
+        attendee_form_errors["email"] = "Attendee email is required."
+
+    attendee_user: User | None = None
+    if not attendee_form_errors:
+        user_result = await session.execute(select(User).where(User.email == normalized_email))
+        attendee_user = user_result.scalar_one_or_none()
+        if attendee_user is None:
+            attendee_form_errors["email"] = "No user found with that email."
+
+    if attendee_form_errors:
+        return await _render_series_detail(
+            request=request,
+            session=session,
+            series_id=series_id,
+            current_user=current_user,
+            status_code=400,
+            attendee_form=attendee_form,
+            attendee_form_errors=attendee_form_errors,
+        )
+
+    if attendee_user is None:
+        raise HTTPException(status_code=400, detail="Invalid attendee")
+
     occ_repo = MeetingOccurrenceRepository(session)
     occurrences = await occ_repo.list_for_series(series_id)
+    occurrence_ids = [occ.id for occ in occurrences]
 
-    active_occurrence: MeetingOccurrence | None = None
-    now = datetime.now(UTC)
-    for o in occurrences:
-        scheduled_at = o.scheduled_at
-        if scheduled_at.tzinfo is None:
-            scheduled_at = scheduled_at.replace(tzinfo=UTC)
-        if scheduled_at >= now:
-            active_occurrence = o
-            break
-    if active_occurrence is None and occurrences:
-        active_occurrence = occurrences[-1]
+    existing_occurrence_ids: set[uuid.UUID] = set()
+    if occurrence_ids:
+        existing_links = (
+            await session.execute(
+                select(MeetingOccurrenceAttendee.occurrence_id).where(
+                    MeetingOccurrenceAttendee.user_id == attendee_user.id,
+                    MeetingOccurrenceAttendee.occurrence_id.in_(occurrence_ids),
+                )
+            )
+        ).scalars()
+        existing_occurrence_ids = set(existing_links)
 
-    return templates.TemplateResponse(
-        request,
-        "series_detail.html",
-        {
-            "series": series,
-            "recurrence_label": recurrence_label(
-                recurrence_rrule=series.recurrence_rrule,
-                recurrence_dtstart=series.recurrence_dtstart,
-                recurrence_timezone=series.recurrence_timezone,
-                default_interval_days=series.default_interval_days,
-            ),
-            "occurrences": occurrences,
-            "active_occurrence": active_occurrence,
-            "current_user": current_user,
-        },
+    added_count = 0
+    for occurrence_id in occurrence_ids:
+        if occurrence_id in existing_occurrence_ids:
+            continue
+        session.add(
+            MeetingOccurrenceAttendee(occurrence_id=occurrence_id, user_id=attendee_user.id)
+        )
+        added_count += 1
+
+    if added_count > 0:
+        await session.commit()
+        log_with_fields(
+            logger,
+            logging.INFO,
+            "series attendee added",
+            user_id=current_user.id,
+            series_id=series_id,
+            attendee_user_id=attendee_user.id,
+            attendee_email=attendee_user.email,
+            occurrences_linked=added_count,
+        )
+
+    return RedirectResponse(
+        url=request.app.url_path_for("series_detail", series_id=str(series_id)),
+        status_code=303,
     )
 
 

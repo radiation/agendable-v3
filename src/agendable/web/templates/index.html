@@ -63,6 +63,19 @@
             Reminder lead (minutes)
             <input name="reminder_minutes_before" type="number" min="0" max="43200" value="60" required />
         </label>
+        <label class="span-all">
+            Attendees
+            <div style="position: relative;">
+                <input id="attendee-emails" name="attendee_emails" type="text"
+                    placeholder="Start typing name or email; separate with commas"
+                    hx-get="/series/attendee-suggestions" hx-trigger="keyup changed delay:250ms"
+                    hx-target="#attendee-suggestions" hx-swap="innerHTML" autocomplete="off" />
+                <div id="attendee-suggestions"
+                    style="position: absolute; left: 0; right: 0; top: calc(100% + 0.25rem); z-index: 10;">
+                    {% include "partials/series_attendee_suggestions.html" %}
+                </div>
+            </div>
+        </label>
 
         <button type="submit">Create</button>
     </form>
@@ -83,6 +96,39 @@
 
 <script>
     (() => {
+        window.agendableAddAttendeeEmail = (email) => {
+            const attendeesInput = document.getElementById("attendee-emails");
+            const suggestions = document.getElementById("attendee-suggestions");
+            if (!attendeesInput) return;
+
+            const normalizedEmail = String(email).toLowerCase();
+            const existing = attendeesInput.value
+                .split(",")
+                .map((value) => value.trim().toLowerCase())
+                .filter((value) => value.length > 0);
+
+            const isDuplicate = existing.includes(normalizedEmail);
+
+            if (!isDuplicate) {
+                const pieces = attendeesInput.value.split(",");
+                pieces[pieces.length - 1] = ` ${normalizedEmail}`;
+                attendeesInput.value = pieces
+                    .map((value) => value.trim())
+                    .filter((value) => value.length > 0)
+                    .join(", ");
+            }
+
+            attendeesInput.value = attendeesInput.value.replace(/\s*,\s*/g, ", ");
+            if (attendeesInput.value && !attendeesInput.value.endsWith(", ")) {
+                attendeesInput.value = `${attendeesInput.value}, `;
+            }
+
+            attendeesInput.focus();
+            if (suggestions) {
+                suggestions.innerHTML = "<p><small>Type at least 2 characters to search users.</small></p>";
+            }
+        };
+
         const tzInput = document.getElementById("recurrence-timezone");
         if (!tzInput) return;
 

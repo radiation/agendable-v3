@@ -14,6 +14,21 @@
     {% endif %}
 </section>
 
+<section>
+    <h3>Attendees</h3>
+    <form method="post" action="/series/{{ series.id }}/attendees"
+        style="display:flex; gap: .5rem; flex-wrap: wrap; align-items: end;">
+        <label>
+            Add to all meetings by email
+            <input name="email" type="email" required value="{{ attendee_form.email if attendee_form else '' }}" />
+        </label>
+        <button type="submit">Add attendee</button>
+    </form>
+    {% if attendee_form_errors and attendee_form_errors.email %}
+    <p class="field-error">{{ attendee_form_errors.email }}</p>
+    {% endif %}
+</section>
+
 <hr />
 
 <section>
