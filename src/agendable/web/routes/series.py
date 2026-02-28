@@ -12,7 +12,7 @@ from starlette.responses import Response
 
 from agendable.auth import require_user
 from agendable.db import get_session
-from agendable.db.models import MeetingOccurrence, MeetingOccurrenceAttendee, User
+from agendable.db.models import MeetingOccurrence, MeetingOccurrenceAttendee, MeetingSeries, User
 from agendable.db.repos import MeetingOccurrenceRepository, MeetingSeriesRepository
 from agendable.logging_config import log_with_fields
 from agendable.recurrence import build_rrule
@@ -173,6 +173,64 @@ async def _render_series_detail(
         },
         status_code=status_code,
     )
+
+
+async def _get_owned_series_or_404(
+    session: AsyncSession,
+    series_id: uuid.UUID,
+    owner_user_id: uuid.UUID,
+) -> MeetingSeries:
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.get_for_owner(series_id, owner_user_id)
+    if series is None:
+        raise HTTPException(status_code=404)
+    return series
+
+
+async def _resolve_series_attendee_user(
+    session: AsyncSession,
+    email: str,
+) -> User | None:
+    result = await session.execute(select(User).where(User.email == email))
+    return result.scalar_one_or_none()
+
+
+async def _existing_attendee_occurrence_ids(
+    *,
+    session: AsyncSession,
+    attendee_user_id: uuid.UUID,
+    occurrence_ids: list[uuid.UUID],
+) -> set[uuid.UUID]:
+    if not occurrence_ids:
+        return set()
+
+    existing_links = (
+        await session.execute(
+            select(MeetingOccurrenceAttendee.occurrence_id).where(
+                MeetingOccurrenceAttendee.user_id == attendee_user_id,
+                MeetingOccurrenceAttendee.occurrence_id.in_(occurrence_ids),
+            )
+        )
+    ).scalars()
+    return set(existing_links)
+
+
+def _add_missing_attendee_links(
+    *,
+    session: AsyncSession,
+    attendee_user_id: uuid.UUID,
+    occurrence_ids: list[uuid.UUID],
+    existing_occurrence_ids: set[uuid.UUID],
+) -> int:
+    added_count = 0
+    for occurrence_id in occurrence_ids:
+        if occurrence_id in existing_occurrence_ids:
+            continue
+        session.add(
+            MeetingOccurrenceAttendee(occurrence_id=occurrence_id, user_id=attendee_user_id)
+        )
+        added_count += 1
+    return added_count
 
 
 @router.get("/", response_class=Response)
@@ -395,10 +453,7 @@ async def add_series_attendee(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
 ) -> Response:
-    series_repo = MeetingSeriesRepository(session)
-    series = await series_repo.get_for_owner(series_id, current_user.id)
-    if series is None:
-        raise HTTPException(status_code=404)
+    await _get_owned_series_or_404(session, series_id, current_user.id)
 
     normalized_email = email.strip().lower()
     attendee_form = {"email": normalized_email}
@@ -409,8 +464,7 @@ async def add_series_attendee(
 
     attendee_user: User | None = None
     if not attendee_form_errors:
-        user_result = await session.execute(select(User).where(User.email == normalized_email))
-        attendee_user = user_result.scalar_one_or_none()
+        attendee_user = await _resolve_series_attendee_user(session, normalized_email)
         if attendee_user is None:
             attendee_form_errors["email"] = "No user found with that email."
 
@@ -432,26 +486,17 @@ async def add_series_attendee(
     occurrences = await occ_repo.list_for_series(series_id)
     occurrence_ids = [occ.id for occ in occurrences]
 
-    existing_occurrence_ids: set[uuid.UUID] = set()
-    if occurrence_ids:
-        existing_links = (
-            await session.execute(
-                select(MeetingOccurrenceAttendee.occurrence_id).where(
-                    MeetingOccurrenceAttendee.user_id == attendee_user.id,
-                    MeetingOccurrenceAttendee.occurrence_id.in_(occurrence_ids),
-                )
-            )
-        ).scalars()
-        existing_occurrence_ids = set(existing_links)
-
-    added_count = 0
-    for occurrence_id in occurrence_ids:
-        if occurrence_id in existing_occurrence_ids:
-            continue
-        session.add(
-            MeetingOccurrenceAttendee(occurrence_id=occurrence_id, user_id=attendee_user.id)
-        )
-        added_count += 1
+    existing_occurrence_ids = await _existing_attendee_occurrence_ids(
+        session=session,
+        attendee_user_id=attendee_user.id,
+        occurrence_ids=occurrence_ids,
+    )
+    added_count = _add_missing_attendee_links(
+        session=session,
+        attendee_user_id=attendee_user.id,
+        occurrence_ids=occurrence_ids,
+        existing_occurrence_ids=existing_occurrence_ids,
+    )
 
     if added_count > 0:
         await session.commit()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -96,6 +97,129 @@ async def _ensure_occurrence_owner(
         raise HTTPException(status_code=404)
 
 
+async def _get_default_task_due_at(
+    session: AsyncSession,
+    occurrence: MeetingOccurrence,
+) -> datetime:
+    occ_repo = MeetingOccurrenceRepository(session)
+    next_occurrence = await occ_repo.get_next_for_series(
+        occurrence.series_id, occurrence.scheduled_at
+    )
+    if next_occurrence is not None:
+        return next_occurrence.scheduled_at
+    return occurrence.scheduled_at
+
+
+async def _task_due_default_value(
+    session: AsyncSession,
+    occurrence: MeetingOccurrence,
+    timezone: str,
+) -> str:
+    due_at = await _get_default_task_due_at(session, occurrence)
+    return format_datetime_local_value(due_at, timezone)
+
+
+async def _list_occurrence_attendee_users(
+    session: AsyncSession,
+    occurrence_id: uuid.UUID,
+    current_user: User,
+) -> list[User]:
+    attendee_links = list(
+        (
+            await session.execute(
+                select(MeetingOccurrenceAttendee)
+                .options(selectinload(MeetingOccurrenceAttendee.user))
+                .where(MeetingOccurrenceAttendee.occurrence_id == occurrence_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    attendee_users = [current_user]
+    attendee_user_ids: set[uuid.UUID] = {current_user.id}
+    for link in attendee_links:
+        if link.user_id in attendee_user_ids:
+            continue
+        attendee_users.append(link.user)
+        attendee_user_ids.add(link.user_id)
+
+    return attendee_users
+
+
+def _merged_task_form(
+    *,
+    task_due_default_value: str,
+    task_form: dict[str, str] | None,
+    current_user: User,
+) -> dict[str, str]:
+    selected_task_form = _base_task_form(task_due_default_value=task_due_default_value)
+    if task_form is not None:
+        selected_task_form.update(task_form)
+    if not selected_task_form.get("assigned_user_id"):
+        selected_task_form["assigned_user_id"] = str(current_user.id)
+    return selected_task_form
+
+
+def _merged_form(
+    *,
+    base: dict[str, str],
+    form: dict[str, str] | None,
+) -> dict[str, str]:
+    selected = dict(base)
+    if form is not None:
+        selected.update(form)
+    return selected
+
+
+async def _resolve_task_due_at(
+    *,
+    session: AsyncSession,
+    occurrence: MeetingOccurrence,
+    due_at_input: str | None,
+    timezone: str,
+    task_form_errors: dict[str, str],
+) -> datetime:
+    final_due_at = await _get_default_task_due_at(session, occurrence)
+    if due_at_input is None or not due_at_input.strip():
+        return final_due_at
+
+    try:
+        return parse_dt_for_timezone(due_at_input, timezone)
+    except HTTPException:
+        task_form_errors["due_at"] = "Enter a valid due date and time."
+        return final_due_at
+
+
+async def _validate_task_assignee(
+    *,
+    session: AsyncSession,
+    occurrence_id: uuid.UUID,
+    series_owner_user_id: uuid.UUID,
+    assignee_id: uuid.UUID,
+    task_form_errors: dict[str, str],
+) -> None:
+    users_repo = UserRepository(session)
+    assignee = await users_repo.get_by_id(assignee_id)
+    if assignee is None:
+        task_form_errors["assigned_user_id"] = "Choose a valid assignee."
+        return
+
+    if assignee_id == series_owner_user_id:
+        return
+
+    attendee_link = (
+        await session.execute(
+            select(MeetingOccurrenceAttendee).where(
+                MeetingOccurrenceAttendee.occurrence_id == occurrence_id,
+                MeetingOccurrenceAttendee.user_id == assignee_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if attendee_link is None:
+        task_form_errors["assigned_user_id"] = "Assignee must be a meeting attendee."
+
+
 async def _occurrence_detail_context(
     *,
     session: AsyncSession,
@@ -109,14 +233,11 @@ async def _occurrence_detail_context(
     attendee_form: dict[str, str] | None = None,
     attendee_form_errors: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    occ_repo = MeetingOccurrenceRepository(session)
-    next_occurrence = await occ_repo.get_next_for_series(
-        occurrence.series_id, occurrence.scheduled_at
+    task_due_default_value = await _task_due_default_value(
+        session,
+        occurrence,
+        current_user.timezone,
     )
-    task_due_default = (
-        next_occurrence.scheduled_at if next_occurrence is not None else occurrence.scheduled_at
-    )
-    task_due_default_value = format_datetime_local_value(task_due_default, current_user.timezone)
 
     tasks_repo = TaskRepository(session)
     tasks = await tasks_repo.list_for_occurrence(occurrence.id)
@@ -124,37 +245,15 @@ async def _occurrence_detail_context(
     agenda_repo = AgendaItemRepository(session)
     agenda_items = await agenda_repo.list_for_occurrence(occurrence.id)
 
-    attendee_links = list(
-        (
-            await session.execute(
-                select(MeetingOccurrenceAttendee)
-                .options(selectinload(MeetingOccurrenceAttendee.user))
-                .where(MeetingOccurrenceAttendee.occurrence_id == occurrence.id)
-            )
-        )
-        .scalars()
-        .all()
+    attendee_users = await _list_occurrence_attendee_users(session, occurrence.id, current_user)
+
+    selected_task_form = _merged_task_form(
+        task_due_default_value=task_due_default_value,
+        task_form=task_form,
+        current_user=current_user,
     )
-    attendee_users = [current_user]
-    attendee_user_ids: set[uuid.UUID] = {current_user.id}
-    for link in attendee_links:
-        if link.user_id not in attendee_user_ids:
-            attendee_users.append(link.user)
-            attendee_user_ids.add(link.user_id)
-
-    selected_task_form = _base_task_form(task_due_default_value=task_due_default_value)
-    if task_form is not None:
-        selected_task_form.update(task_form)
-    if not selected_task_form.get("assigned_user_id"):
-        selected_task_form["assigned_user_id"] = str(current_user.id)
-
-    selected_agenda_form = _base_agenda_form()
-    if agenda_form is not None:
-        selected_agenda_form.update(agenda_form)
-
-    selected_attendee_form = _base_attendee_form()
-    if attendee_form is not None:
-        selected_attendee_form.update(attendee_form)
+    selected_agenda_form = _merged_form(base=_base_agenda_form(), form=agenda_form)
+    selected_attendee_form = _merged_form(base=_base_attendee_form(), form=attendee_form)
 
     return {
         "series": series,
@@ -255,37 +354,22 @@ async def create_task(
     if not normalized_title:
         task_form_errors["title"] = "Task title is required."
 
-    occ_repo = MeetingOccurrenceRepository(session)
-    next_occurrence = await occ_repo.get_next_for_series(
-        occurrence.series_id, occurrence.scheduled_at
+    final_due_at = await _resolve_task_due_at(
+        session=session,
+        occurrence=occurrence,
+        due_at_input=due_at_input,
+        timezone=current_user.timezone,
+        task_form_errors=task_form_errors,
     )
-    default_due_at = (
-        next_occurrence.scheduled_at if next_occurrence is not None else occurrence.scheduled_at
-    )
-    final_due_at = default_due_at
-    if due_at_input is not None and due_at_input.strip():
-        try:
-            final_due_at = parse_dt_for_timezone(due_at_input, current_user.timezone)
-        except HTTPException:
-            task_form_errors["due_at"] = "Enter a valid due date and time."
 
     final_assignee_id = assigned_user_id or current_user.id
-    users_repo = UserRepository(session)
-    assignee = await users_repo.get_by_id(final_assignee_id)
-    if assignee is None:
-        task_form_errors["assigned_user_id"] = "Choose a valid assignee."
-
-    if assignee is not None and final_assignee_id != series.owner_user_id:
-        attendee_link = (
-            await session.execute(
-                select(MeetingOccurrenceAttendee).where(
-                    MeetingOccurrenceAttendee.occurrence_id == occurrence_id,
-                    MeetingOccurrenceAttendee.user_id == final_assignee_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if attendee_link is None:
-            task_form_errors["assigned_user_id"] = "Assignee must be a meeting attendee."
+    await _validate_task_assignee(
+        session=session,
+        occurrence_id=occurrence_id,
+        series_owner_user_id=series.owner_user_id,
+        assignee_id=final_assignee_id,
+        task_form_errors=task_form_errors,
+    )
 
     if task_form_errors:
         return await _render_occurrence_detail(
