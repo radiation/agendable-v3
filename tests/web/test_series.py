@@ -751,7 +751,7 @@ async def test_series_attendee_suggestions_ignores_short_queries(client: AsyncCl
 
     resp = await client.get("/series/attendee-suggestions?q=a")
     assert resp.status_code == 200
-    assert "Type at least 2 characters to search users." in resp.text
+    assert resp.text == ""
 
 
 @pytest.mark.asyncio
