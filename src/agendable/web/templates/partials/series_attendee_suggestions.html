@@ -1,10 +1,10 @@
 {% if query|trim|length >= 2 and users %}
-<ul
-    style="list-style: none; margin: 0; padding: .25rem; padding-left: 0; border: 1px solid var(--border); border-radius: .375rem; background: var(--control-bg); max-height: 14rem; overflow-y: auto;">
+<ul class="list-clean"
+    style="list-style: none; margin: 0; padding: .25rem; border: 1px solid var(--border); border-radius: .375rem; background: var(--control-bg); max-height: 14rem; overflow-y: auto;">
     {% for user in users %}
     <li>
         <button type="button" data-attendee-email="{{ user.email }}"
-            style="display: block; width: 100%; text-align: left; padding: .375rem .5rem; border: 0; background: transparent; cursor: pointer;">
+            style="display: block; width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer;">
             {{ user.display_name }} ({{ user.email }})
         </button>
     </li>

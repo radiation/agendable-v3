@@ -3,95 +3,104 @@
 {% block title %}Agendable — Series{% endblock %}
 
 {% block content %}
-<section>
-    <h2>Meeting series</h2>
+<section class="stack-lg">
+    <div class="section-title">
+        <h2>Meeting series</h2>
+    </div>
 
     {% if not current_user %}
     <p><em>Sign in to create and view meeting series.</em></p>
     {% else %}
-    <form method="post" action="/series" class="form-grid">
-        <label>
-            Title
-            <input name="title" required />
-        </label>
+    <section class="section-card">
+        <h3>Create series</h3>
+        <form method="post" action="/series" class="form-grid">
+            <label>
+                Title
+                <input name="title" required />
+            </label>
 
-        <label>
-            Repeat
-            <select id="recurrence-freq" name="recurrence_freq" required hx-get="/series/recurrence-options"
-                hx-target="#recurrence-options" hx-swap="innerHTML">
-                <option value="DAILY">Daily</option>
-                <option value="WEEKLY">Weekly</option>
-                <option value="MONTHLY">Monthly</option>
-            </select>
-        </label>
-        <label>
-            Every
-            <input name="recurrence_interval" type="number" min="1" max="365" value="1" required />
-        </label>
+            <label>
+                Repeat
+                <select id="recurrence-freq" name="recurrence_freq" required hx-get="/series/recurrence-options"
+                    hx-target="#recurrence-options" hx-swap="innerHTML">
+                    <option value="DAILY">Daily</option>
+                    <option value="WEEKLY">Weekly</option>
+                    <option value="MONTHLY">Monthly</option>
+                </select>
+            </label>
+            <label>
+                Every
+                <input name="recurrence_interval" type="number" min="1" max="365" value="1" required />
+            </label>
 
-        <div id="recurrence-options" class="span-all">
-            {% include "partials/series_recurrence_options.html" %}
-        </div>
+            <div id="recurrence-options" class="span-all">
+                {% include "partials/series_recurrence_options.html" %}
+            </div>
 
-        <label>
-            Time
-            <input name="recurrence_time" type="time" value="09:00" required />
-        </label>
-        <label>
-            Time zone
-            <select id="recurrence-timezone" name="recurrence_timezone" required>
-                {% set selected_tz = current_user.timezone if current_user and current_user.timezone else "UTC" %}
-                {% set ns = namespace(found=false) %}
-                {% for tz_value, tz_label in timezone_options %}
-                {% if tz_value == selected_tz %}{% set ns.found = true %}{% endif %}
-                <option value="{{ tz_value }}" {% if tz_value==selected_tz %}selected{% endif %}>{{ tz_label }}</option>
-                {% endfor %}
-                {% if selected_tz and not ns.found %}
-                <option value="{{ selected_tz }}" selected>{{ selected_tz }} (custom)</option>
-                {% endif %}
-            </select>
-        </label>
-        <label>
-            Start date
-            <input name="recurrence_start_date" type="date" required />
-        </label>
-        <label>
-            Generate
-            <input name="generate_count" type="number" min="1" max="200" value="10" required />
-        </label>
-        <label>
-            Reminder lead (minutes)
-            <input name="reminder_minutes_before" type="number" min="0" max="43200" value="60" required />
-        </label>
-        <div class="span-all">
-            <label for="attendee-emails">Attendees</label>
-            <div style="position: relative;">
-                <input id="attendee-emails" name="attendee_emails" type="text"
-                    placeholder="Start typing name or email; separate with commas" hx-get="/series/attendee-suggestions"
-                    hx-trigger="keyup changed delay:250ms" hx-target="#attendee-suggestions" hx-swap="innerHTML"
-                    onblur="window.setTimeout(() => window.agendableClearAttendeeSuggestions(), 120)"
-                    autocomplete="off" />
-                <div id="attendee-suggestions"
-                    style="position: absolute; left: 0; right: 0; top: calc(100% + 0.25rem); z-index: 50; pointer-events: auto;">
-                    {% include "partials/series_attendee_suggestions.html" %}
+            <label>
+                Time
+                <input name="recurrence_time" type="time" value="09:00" required />
+            </label>
+            <label>
+                Time zone
+                <select id="recurrence-timezone" name="recurrence_timezone" required>
+                    {% set selected_tz = current_user.timezone if current_user and current_user.timezone else "UTC" %}
+                    {% set ns = namespace(found=false) %}
+                    {% for tz_value, tz_label in timezone_options %}
+                    {% if tz_value == selected_tz %}{% set ns.found = true %}{% endif %}
+                    <option value="{{ tz_value }}" {% if tz_value==selected_tz %}selected{% endif %}>{{ tz_label }}
+                    </option>
+                    {% endfor %}
+                    {% if selected_tz and not ns.found %}
+                    <option value="{{ selected_tz }}" selected>{{ selected_tz }} (custom)</option>
+                    {% endif %}
+                </select>
+            </label>
+            <label>
+                Start date
+                <input name="recurrence_start_date" type="date" required />
+            </label>
+            <label>
+                Generate
+                <input name="generate_count" type="number" min="1" max="200" value="10" required />
+            </label>
+            <label>
+                Reminder lead (minutes)
+                <input name="reminder_minutes_before" type="number" min="0" max="43200" value="60" required />
+            </label>
+            <div class="span-all">
+                <label for="attendee-emails">Attendees</label>
+                <div class="typeahead">
+                    <input id="attendee-emails" name="attendee_emails" type="text"
+                        placeholder="Start typing name or email; separate with commas"
+                        hx-get="/series/attendee-suggestions" hx-trigger="keyup changed delay:250ms"
+                        hx-target="#attendee-suggestions" hx-swap="innerHTML"
+                        onblur="window.setTimeout(() => window.agendableClearAttendeeSuggestions(), 120)"
+                        autocomplete="off" />
+                    <div id="attendee-suggestions" class="typeahead-panel">
+                        {% include "partials/series_attendee_suggestions.html" %}
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <button type="submit">Create</button>
-    </form>
+            <button type="submit">Create</button>
+        </form>
+    </section>
 
-    <ul>
-        {% for s in series %}
-        <li>
-            <a href="/series/{{ s.id }}">{{ s.title }}</a>
-            <small>({{ series_recurrence.get(s.id, "") }})</small>
-        </li>
-        {% else %}
-        <li><em>No series yet. Create your first recurring meeting above, then open it to add agenda and tasks.</em>
-        </li>
-        {% endfor %}
-    </ul>
+    <section class="section-card">
+        <h3>Your series</h3>
+        <ul class="list-clean">
+            {% for s in series %}
+            <li>
+                <a href="/series/{{ s.id }}">{{ s.title }}</a>
+                <small>({{ series_recurrence.get(s.id, "") }})</small>
+            </li>
+            {% else %}
+            <li><em>No series yet. Create your first recurring meeting above, then open it to add agenda and tasks.</em>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
     {% endif %}
 </section>
 

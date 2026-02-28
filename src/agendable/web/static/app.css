@@ -24,10 +24,22 @@ body {
     font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--fg);
+    margin: 0;
+    line-height: 1.45;
 }
 
 a {
     color: var(--link);
+}
+
+h1,
+h2,
+h3 {
+    margin: 0;
+}
+
+p {
+    margin: 0;
 }
 
 small {
@@ -43,10 +55,28 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="r
 select,
 textarea,
 button {
-    padding: 0.35rem 0.5rem;
+    padding: 0.5rem 0.65rem;
     background: var(--control-bg);
     color: var(--fg);
     border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    font: inherit;
+}
+
+button {
+    cursor: pointer;
+}
+
+button:hover {
+    filter: brightness(0.98);
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+button:focus {
+    outline: 2px solid var(--link);
+    outline-offset: 1px;
 }
 
 label {
@@ -95,6 +125,87 @@ label.inline {
     font-size: 0.8rem;
 }
 
+.page-shell {
+    max-width: 980px;
+    margin: 1.5rem auto;
+    padding: 0 1rem 2rem;
+}
+
+.topbar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.topbar-nav {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+}
+
+.stack-lg {
+    display: grid;
+    gap: 1rem;
+}
+
+.section-card {
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: var(--control-bg);
+    padding: 1rem;
+    display: grid;
+    gap: 0.75rem;
+}
+
+.section-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.back-link {
+    display: inline-flex;
+    margin-bottom: 0.75rem;
+}
+
+.list-clean {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: 0.4rem;
+}
+
+.typeahead {
+    position: relative;
+}
+
+.typeahead-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 0.25rem);
+    z-index: 50;
+    pointer-events: auto;
+}
+
+.inline-actions {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.status-pill {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+}
+
 @media (max-width: 640px) {
     .inline-form {
         display: grid;
@@ -107,5 +218,6 @@ ul {
 }
 
 button.typeahead-active {
-    outline: 1px solid var(--border);
+    outline: 2px solid var(--link);
+    outline-offset: -1px;
 }
