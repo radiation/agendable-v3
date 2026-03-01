@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any, cast
 
 from authlib.integrations.starlette_client import OAuthError
@@ -15,6 +15,7 @@ from agendable.db.models import ExternalIdentity, User
 from agendable.logging_config import log_with_fields
 from agendable.security_audit import audit_oidc_denied, audit_oidc_success
 from agendable.services.oidc_service import (
+    OidcLoginResolution,
     is_email_allowed_for_domain,
     oidc_login_error_message,
     resolve_oidc_login_resolution,
@@ -46,24 +47,12 @@ def audit_callback_denied(
 
 
 def auth_oidc_enabled() -> bool:
-    routes_mod = cast(Any, auth_routes)
-    enabled_fn = cast(
-        Callable[[], bool],
-        routes_mod._oidc_enabled
-        if hasattr(routes_mod, "_oidc_enabled")
-        else routes_mod.oidc_enabled,
-    )
+    enabled_fn = getattr(auth_routes, "_oidc_enabled", auth_routes.oidc_enabled)
     return enabled_fn()
 
 
 def auth_oidc_oauth_client() -> Any:
-    routes_mod = cast(Any, auth_routes)
-    client_fn = cast(
-        Callable[[], Any],
-        routes_mod._oidc_oauth_client
-        if hasattr(routes_mod, "_oidc_oauth_client")
-        else routes_mod.oidc_oauth_client,
-    )
+    client_fn = getattr(auth_routes, "_oidc_oauth_client", auth_routes.oidc_oauth_client)
     return client_fn()
 
 
@@ -132,27 +121,27 @@ async def handle_login_callback(
 async def _resolve_login_user_or_response(
     request: Request,
     *,
-    login_resolution: object,
+    login_resolution: OidcLoginResolution,
     email: str,
     debug_oidc: bool,
 ) -> User | Response:
-    resolved = cast(Any, login_resolution)
-
-    if resolved.should_redirect_login:
+    if login_resolution.should_redirect_login:
         if debug_oidc:
             logger.info("OIDC callback identity points to missing user")
         return _login_redirect()
 
-    error_message = oidc_login_error_message(resolved.error)
+    error_message = oidc_login_error_message(login_resolution.error)
     if error_message is not None:
+        if login_resolution.error is None:
+            raise ValueError("OIDC login resolution error_message requires a non-None error code")
         audit_oidc_denied(
             event="callback_login",
-            reason=resolved.error,
+            reason=login_resolution.error,
             actor_email=email,
         )
-        if debug_oidc and resolved.error == "inactive_user":
+        if debug_oidc and login_resolution.error == "inactive_user":
             logger.info("OIDC callback denied inactive user for email=%s", email)
-        if debug_oidc and resolved.error == "password_user_requires_link":
+        if debug_oidc and login_resolution.error == "password_user_requires_link":
             logger.info("OIDC callback denied linking password-based account")
         return auth_routes.render_login_template(
             request,
@@ -160,7 +149,7 @@ async def _resolve_login_user_or_response(
             status_code=403,
         )
 
-    user = cast(User | None, resolved.user)
+    user = login_resolution.user
     if user is None:
         return _login_redirect()
     return user

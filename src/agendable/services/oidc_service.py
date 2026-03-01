@@ -11,19 +11,19 @@ from agendable.sso_oidc_flow import userinfo_name_parts
 
 
 @dataclass(frozen=True)
-class OidcLinkResolution:
+class OidcResolution:
     user: User | None
     create_identity: bool
     error: str | None = None
     should_redirect_login: bool = False
 
 
-@dataclass(frozen=True)
-class OidcLoginResolution:
-    user: User | None
-    create_identity: bool
-    error: str | None = None
-    should_redirect_login: bool = False
+class OidcLinkResolution(OidcResolution):
+    pass
+
+
+class OidcLoginResolution(OidcResolution):
+    pass
 
 
 def oidc_login_error_message(error: str | None) -> str | None:
