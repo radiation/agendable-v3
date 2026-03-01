@@ -15,6 +15,13 @@ from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.logging_config import log_with_fields
 from agendable.security_audit import audit_admin_denied, audit_admin_success
+from agendable.security_audit_constants import (
+    ADMIN_EVENT_USER_ACTIVE_UPDATE,
+    ADMIN_EVENT_USER_ROLE_UPDATE,
+    ADMIN_REASON_INVALID_ROLE,
+    ADMIN_REASON_SELF_DEACTIVATION_BLOCKED,
+    ADMIN_REASON_SELF_DEMOTION_BLOCKED,
+)
 from agendable.web.routes.common import templates
 
 router = APIRouter()
@@ -116,8 +123,8 @@ async def admin_update_user_role(
         new_role = UserRole(role.strip().lower())
     except ValueError:
         audit_admin_denied(
-            event="user_role_update",
-            reason="invalid_role",
+            event=ADMIN_EVENT_USER_ROLE_UPDATE,
+            reason=ADMIN_REASON_INVALID_ROLE,
             actor=current_user,
             target_user_id=user_id,
             requested_role=role,
@@ -134,8 +141,8 @@ async def admin_update_user_role(
 
     if user.id == current_user.id and new_role != UserRole.admin:
         audit_admin_denied(
-            event="user_role_update",
-            reason="self_demotion_blocked",
+            event=ADMIN_EVENT_USER_ROLE_UPDATE,
+            reason=ADMIN_REASON_SELF_DEMOTION_BLOCKED,
             actor=current_user,
             target_user_id=user.id,
             previous_role=user.role.value,
@@ -161,7 +168,7 @@ async def admin_update_user_role(
     user.role = new_role
     await session.commit()
     audit_admin_success(
-        event="user_role_update",
+        event=ADMIN_EVENT_USER_ROLE_UPDATE,
         actor=current_user,
         target_user_id=user.id,
         previous_role=previous_role,
@@ -193,8 +200,8 @@ async def admin_update_user_active(
     new_is_active = _parse_bool(is_active)
     if user.id == current_user.id and not new_is_active:
         audit_admin_denied(
-            event="user_active_update",
-            reason="self_deactivation_blocked",
+            event=ADMIN_EVENT_USER_ACTIVE_UPDATE,
+            reason=ADMIN_REASON_SELF_DEACTIVATION_BLOCKED,
             actor=current_user,
             target_user_id=user.id,
             previous_is_active=user.is_active,
@@ -220,7 +227,7 @@ async def admin_update_user_active(
     user.is_active = new_is_active
     await session.commit()
     audit_admin_success(
-        event="user_active_update",
+        event=ADMIN_EVENT_USER_ACTIVE_UPDATE,
         actor=current_user,
         target_user_id=user.id,
         previous_is_active=previous_is_active,

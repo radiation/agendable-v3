@@ -12,6 +12,11 @@ from agendable.db.models import ExternalIdentity, User
 from agendable.db.repos import ExternalIdentityRepository
 from agendable.logging_config import log_with_fields
 from agendable.security_audit import audit_oidc_denied, audit_oidc_success
+from agendable.security_audit_constants import (
+    OIDC_EVENT_IDENTITY_LINK,
+    OIDC_REASON_ALREADY_LINKED_OTHER_USER,
+    OIDC_REASON_EMAIL_MISMATCH,
+)
 from agendable.services.oidc_service import resolve_oidc_link_resolution
 from agendable.sso_oidc_flow import clear_oidc_link_user_id
 from agendable.web.routes import auth as auth_routes
@@ -98,8 +103,8 @@ async def handle_link_callback(
         ext = await ext_repo.get_by_provider_subject("oidc", sub)
         clear_oidc_link_user_id(request)
         audit_oidc_denied(
-            event="identity_link",
-            reason="already_linked_other_user",
+            event=OIDC_EVENT_IDENTITY_LINK,
+            reason=OIDC_REASON_ALREADY_LINKED_OTHER_USER,
             actor=link_user,
             target_user_id=(ext.user_id if ext is not None else None),
         )
@@ -123,8 +128,8 @@ async def handle_link_callback(
     if link_resolution.error == "email_mismatch":
         clear_oidc_link_user_id(request)
         audit_oidc_denied(
-            event="identity_link",
-            reason="email_mismatch",
+            event=OIDC_EVENT_IDENTITY_LINK,
+            reason=OIDC_REASON_EMAIL_MISMATCH,
             actor=link_user,
             oidc_email=email,
         )
@@ -153,7 +158,7 @@ async def handle_link_callback(
     clear_oidc_link_user_id(request)
     request.session["user_id"] = str(link_user.id)
     audit_oidc_success(
-        event="identity_link",
+        event=OIDC_EVENT_IDENTITY_LINK,
         actor=link_user,
     )
     return RedirectResponse(url="/profile", status_code=303)

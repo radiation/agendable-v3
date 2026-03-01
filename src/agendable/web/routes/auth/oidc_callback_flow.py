@@ -13,6 +13,14 @@ from starlette.responses import Response
 from agendable.db.models import ExternalIdentity, User
 from agendable.logging_config import log_with_fields
 from agendable.security_audit import audit_oidc_denied, audit_oidc_success
+from agendable.security_audit_constants import (
+    OIDC_EVENT_CALLBACK,
+    OIDC_EVENT_CALLBACK_LOGIN,
+    OIDC_REASON_DOMAIN_NOT_ALLOWED,
+    OIDC_REASON_MISSING_REQUIRED_CLAIMS,
+    OIDC_REASON_OAUTH_ERROR,
+    OIDC_REASON_RATE_LIMITED,
+)
 from agendable.services.oidc_service import (
     OidcLoginResolution,
     is_email_allowed_for_domain,
@@ -31,20 +39,6 @@ from agendable.web.routes.auth.oidc_link_flow import render_link_error
 from agendable.web.routes.auth.rate_limits import is_oidc_callback_rate_limited
 
 logger = logging.getLogger("uvicorn.error")
-
-
-def audit_callback_denied(
-    *,
-    reason: str,
-    actor_email: str | None = None,
-    link_mode: bool | None = None,
-) -> None:
-    audit_oidc_denied(
-        event="callback",
-        reason=reason,
-        actor_email=actor_email,
-        link_mode=link_mode,
-    )
 
 
 def auth_oidc_enabled() -> bool:
@@ -112,7 +106,7 @@ async def handle_login_callback(
 
     request.session["user_id"] = str(user.id)
     audit_oidc_success(
-        event="callback_login",
+        event=OIDC_EVENT_CALLBACK_LOGIN,
         actor=user,
         link_mode=link_user_id is not None,
     )
@@ -136,7 +130,7 @@ async def _resolve_login_user_or_response(
         if login_resolution.error is None:
             raise ValueError("OIDC login resolution error_message requires a non-None error code")
         audit_oidc_denied(
-            event="callback_login",
+            event=OIDC_EVENT_CALLBACK_LOGIN,
             reason=login_resolution.error,
             actor_email=email,
         )
@@ -186,7 +180,11 @@ async def _exchange_token_or_error(
     try:
         token = await oidc_client.authorize_access_token(request)
     except OAuthError:
-        audit_callback_denied(reason="oauth_error", link_mode=link_user_id is not None)
+        audit_oidc_denied(
+            event=OIDC_EVENT_CALLBACK,
+            reason=OIDC_REASON_OAUTH_ERROR,
+            link_mode=link_user_id is not None,
+        )
         if debug_oidc:
             logger.info("OIDC callback OAuthError during token/id token exchange")
         if link_user_id is not None:
@@ -238,8 +236,9 @@ async def _parse_and_validate_claims_or_error(
             bool(email),
             email_verified,
         )
-    audit_callback_denied(
-        reason="missing_required_claims",
+    audit_oidc_denied(
+        event=OIDC_EVENT_CALLBACK,
+        reason=OIDC_REASON_MISSING_REQUIRED_CLAIMS,
         actor_email=email,
         link_mode=link_user_id is not None,
     )
@@ -304,7 +303,11 @@ def domain_block_response(
             email,
             allowed,
         )
-    audit_callback_denied(reason="domain_not_allowed", actor_email=email)
+    audit_oidc_denied(
+        event=OIDC_EVENT_CALLBACK,
+        reason=OIDC_REASON_DOMAIN_NOT_ALLOWED,
+        actor_email=email,
+    )
     return auth_routes.render_login_template(
         request,
         error="Email domain not allowed",
@@ -324,8 +327,9 @@ async def rate_limit_block_response(
     if not is_oidc_callback_rate_limited(request, settings=settings, account_key=account_key):
         return None
 
-    audit_callback_denied(
-        reason="rate_limited",
+    audit_oidc_denied(
+        event=OIDC_EVENT_CALLBACK,
+        reason=OIDC_REASON_RATE_LIMITED,
         actor_email=email,
         link_mode=link_user_id is not None,
     )
