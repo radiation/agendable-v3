@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -14,16 +13,25 @@ from agendable.db import get_session
 from agendable.db.models import User
 from agendable.db.repos import ExternalIdentityRepository
 from agendable.logging_config import log_with_fields
-from agendable.security_audit import audit_oidc_denied, audit_oidc_success
+from agendable.security.audit import audit_oidc_denied, audit_oidc_success
+from agendable.security.audit_constants import (
+    OIDC_EVENT_CALLBACK,
+    OIDC_EVENT_IDENTITY_LINK_START,
+    OIDC_EVENT_IDENTITY_UNLINK,
+    OIDC_REASON_IDENTITY_NOT_FOUND,
+    OIDC_REASON_INVALID_PASSWORD,
+    OIDC_REASON_ONLY_SIGN_IN_METHOD,
+    OIDC_REASON_PROVIDER_DISABLED,
+    OIDC_REASON_RATE_LIMITED,
+)
 from agendable.settings import get_settings
-from agendable.sso_oidc_flow import (
+from agendable.sso.oidc.flow import (
     build_authorize_params,
     get_oidc_link_user_id,
     set_oidc_link_user_id,
 )
 from agendable.web.routes import auth as auth_routes
 from agendable.web.routes.auth.oidc_callbacks import (
-    audit_callback_denied,
     auth_oidc_enabled,
     auth_oidc_oauth_client,
     domain_block_response,
@@ -36,20 +44,6 @@ from agendable.web.routes.auth.rate_limits import is_identity_link_start_rate_li
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
-
-
-def _audit_identity_link_start(
-    *,
-    outcome: str,
-    actor: User,
-    reason: str | None = None,
-) -> None:
-    if outcome == "denied":
-        if reason is None:
-            raise ValueError("reason is required for denied identity link start events")
-        audit_oidc_denied(event="identity_link_start", reason=reason, actor=actor)
-        return
-    audit_oidc_success(event="identity_link_start", actor=actor)
 
 
 @router.get("/auth/oidc/start", response_class=RedirectResponse)
@@ -71,10 +65,7 @@ async def oidc_start(request: Request) -> Response:
     oidc_client = auth_oidc_oauth_client()
     authorize_params = build_authorize_params(settings.oidc_auth_prompt)
 
-    return cast(
-        Response,
-        await oidc_client.authorize_redirect(request, redirect_uri, **authorize_params),
-    )
+    return await oidc_client.authorize_redirect(request, redirect_uri, **authorize_params)
 
 
 @router.get("/auth/oidc/callback", name="oidc_callback")
@@ -87,7 +78,7 @@ async def oidc_callback(
     link_user_id = get_oidc_link_user_id(request)
 
     if not auth_oidc_enabled():
-        audit_callback_denied(reason="provider_disabled")
+        audit_oidc_denied(event=OIDC_EVENT_CALLBACK, reason=OIDC_REASON_PROVIDER_DISABLED)
         if debug_oidc:
             logger.info("OIDC callback aborted: provider is disabled")
         raise HTTPException(status_code=404)
@@ -155,16 +146,20 @@ async def start_profile_identity_link(
     current_user: User = Depends(require_user),
 ) -> Response:
     if not auth_oidc_enabled():
-        _audit_identity_link_start(
-            outcome="denied",
+        audit_oidc_denied(
+            event=OIDC_EVENT_IDENTITY_LINK_START,
+            reason=OIDC_REASON_PROVIDER_DISABLED,
             actor=current_user,
-            reason="provider_disabled",
         )
         raise HTTPException(status_code=404)
 
     user = await auth_routes.get_user_or_404(session, current_user.id)
     if is_identity_link_start_rate_limited(request, user_id=user.id):
-        _audit_identity_link_start(outcome="denied", actor=user, reason="rate_limited")
+        audit_oidc_denied(
+            event=OIDC_EVENT_IDENTITY_LINK_START,
+            reason=OIDC_REASON_RATE_LIMITED,
+            actor=user,
+        )
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -174,7 +169,11 @@ async def start_profile_identity_link(
         )
 
     if user.password_hash is not None and not verify_password(password, user.password_hash):
-        _audit_identity_link_start(outcome="denied", actor=user, reason="invalid_password")
+        audit_oidc_denied(
+            event=OIDC_EVENT_IDENTITY_LINK_START,
+            reason=OIDC_REASON_INVALID_PASSWORD,
+            actor=user,
+        )
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -184,7 +183,7 @@ async def start_profile_identity_link(
         )
 
     set_oidc_link_user_id(request, user.id)
-    _audit_identity_link_start(outcome="success", actor=user)
+    audit_oidc_success(event=OIDC_EVENT_IDENTITY_LINK_START, actor=user)
     return RedirectResponse(url="/auth/oidc/start", status_code=303)
 
 
@@ -204,8 +203,8 @@ async def unlink_profile_identity(
     identity = await ext_repo.get(identity_id)
     if identity is None or identity.user_id != user.id:
         audit_oidc_denied(
-            event="identity_unlink",
-            reason="identity_not_found",
+            event=OIDC_EVENT_IDENTITY_UNLINK,
+            reason=OIDC_REASON_IDENTITY_NOT_FOUND,
             actor=user,
             target_identity_id=identity_id,
         )
@@ -214,8 +213,8 @@ async def unlink_profile_identity(
     identities = await ext_repo.list_by_user_id(user.id)
     if user.password_hash is None and len(identities) <= 1:
         audit_oidc_denied(
-            event="identity_unlink",
-            reason="only_sign_in_method",
+            event=OIDC_EVENT_IDENTITY_UNLINK,
+            reason=OIDC_REASON_ONLY_SIGN_IN_METHOD,
             actor=user,
             target_identity_id=identity.id,
         )
@@ -230,7 +229,7 @@ async def unlink_profile_identity(
     await ext_repo.delete(identity, flush=False)
     await session.commit()
     audit_oidc_success(
-        event="identity_unlink",
+        event=OIDC_EVENT_IDENTITY_UNLINK,
         actor=user,
         target_identity_id=identity.id,
     )

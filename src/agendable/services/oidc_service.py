@@ -7,29 +7,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
-from agendable.sso_oidc_flow import userinfo_name_parts
+from agendable.security.audit_constants import (
+    OIDC_REASON_ALREADY_LINKED_OTHER_USER,
+    OIDC_REASON_EMAIL_MISMATCH,
+    OIDC_REASON_INACTIVE_USER,
+    OIDC_REASON_PASSWORD_USER_REQUIRES_LINK,
+)
+from agendable.sso.oidc.flow import userinfo_name_parts
 
 
 @dataclass(frozen=True)
-class OidcLinkResolution:
+class OidcResolution:
     user: User | None
     create_identity: bool
     error: str | None = None
     should_redirect_login: bool = False
 
 
-@dataclass(frozen=True)
-class OidcLoginResolution:
-    user: User | None
-    create_identity: bool
-    error: str | None = None
-    should_redirect_login: bool = False
+class OidcLinkResolution(OidcResolution):
+    pass
+
+
+class OidcLoginResolution(OidcResolution):
+    pass
 
 
 def oidc_login_error_message(error: str | None) -> str | None:
-    if error == "inactive_user":
+    if error == OIDC_REASON_INACTIVE_USER:
         return "This account is deactivated. Contact an admin."
-    if error == "password_user_requires_link":
+    if error == OIDC_REASON_PASSWORD_USER_REQUIRES_LINK:
         return "An account with this email already exists. Sign in with password first to link SSO."
     return None
 
@@ -84,14 +90,14 @@ async def resolve_oidc_link_resolution(
         return OidcLinkResolution(
             user=link_user,
             create_identity=False,
-            error="already_linked_other_user",
+            error=OIDC_REASON_ALREADY_LINKED_OTHER_USER,
         )
 
     if email != link_user.email:
         return OidcLinkResolution(
             user=link_user,
             create_identity=False,
-            error="email_mismatch",
+            error=OIDC_REASON_EMAIL_MISMATCH,
         )
 
     return OidcLinkResolution(
@@ -117,7 +123,11 @@ async def resolve_oidc_login_resolution(
         if user is None:
             return OidcLoginResolution(user=None, create_identity=False, should_redirect_login=True)
         if not user.is_active:
-            return OidcLoginResolution(user=user, create_identity=False, error="inactive_user")
+            return OidcLoginResolution(
+                user=user,
+                create_identity=False,
+                error=OIDC_REASON_INACTIVE_USER,
+            )
         return OidcLoginResolution(user=user, create_identity=False)
 
     user = await users.get_by_email(email)
@@ -131,10 +141,16 @@ async def resolve_oidc_login_resolution(
         return OidcLoginResolution(user=user, create_identity=True)
 
     if not user.is_active:
-        return OidcLoginResolution(user=user, create_identity=False, error="inactive_user")
+        return OidcLoginResolution(
+            user=user,
+            create_identity=False,
+            error=OIDC_REASON_INACTIVE_USER,
+        )
     if user.password_hash is not None:
         return OidcLoginResolution(
-            user=user, create_identity=False, error="password_user_requires_link"
+            user=user,
+            create_identity=False,
+            error=OIDC_REASON_PASSWORD_USER_REQUIRES_LINK,
         )
 
     return OidcLoginResolution(user=user, create_identity=True)

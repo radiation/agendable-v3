@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agendable.sso_oidc import oidc_enabled
+from agendable.sso.oidc.provider import oidc_enabled
 from agendable.web.routes.auth.router import (
     get_user_or_404,
     is_bootstrap_admin_email,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,10 +9,8 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from agendable.db.models import Base
 
-ModelT = TypeVar("ModelT", bound=Base)
 
-
-class BaseRepository(Generic[ModelT]):  # noqa: UP046
+class BaseRepository[ModelT: Base]:
     def __init__(self, session: AsyncSession, model: type[ModelT]) -> None:
         self.session = session
         self.model = model

@@ -45,7 +45,7 @@ packages = ["src/agendable"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py314"
 src = ["src"]
 extend-exclude = ["migrations"]
 
@@ -80,6 +80,7 @@ known-first-party = ["agendable"]
 
 [tool.mypy]
 python_version = "3.14"
+mypy_path = "src"
 strict = true
 warn_unreachable = true
 pretty = true

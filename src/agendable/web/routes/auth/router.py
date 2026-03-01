@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, cast
+from typing import cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -13,8 +13,19 @@ from agendable.auth import hash_password, require_user, verify_password
 from agendable.db import get_session
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
-from agendable.security_audit import audit_auth_denied, audit_auth_success
+from agendable.security.audit import audit_auth_denied, audit_auth_success
+from agendable.security.audit_constants import (
+    AUTH_EVENT_LOGOUT,
+    AUTH_EVENT_PASSWORD_LOGIN,
+    AUTH_EVENT_SIGNUP,
+    AUTH_REASON_ACCOUNT_EXISTS,
+    AUTH_REASON_ACCOUNT_NOT_FOUND,
+    AUTH_REASON_INACTIVE_USER,
+    AUTH_REASON_INVALID_CREDENTIALS,
+    AUTH_REASON_RATE_LIMITED,
+)
 from agendable.settings import get_settings
+from agendable.sso.oidc.client import OidcClient
 from agendable.web.routes.auth.oidc import router as auth_oidc_router
 from agendable.web.routes.auth.rate_limits import is_login_rate_limited, record_login_failure
 from agendable.web.routes.common import oauth, parse_timezone, templates
@@ -117,11 +128,14 @@ async def get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
     return user
 
 
-def _oidc_oauth_client() -> Any:
-    return cast(Any, oauth).oidc
+def _oidc_oauth_client() -> OidcClient:
+    client = oauth.create_client("oidc")
+    if client is None:
+        raise RuntimeError("OIDC OAuth client is not configured")
+    return cast(OidcClient, client)
 
 
-def oidc_oauth_client() -> Any:
+def oidc_oauth_client() -> OidcClient:
     return _oidc_oauth_client()
 
 
@@ -176,7 +190,9 @@ async def login(
 
     if is_login_rate_limited(request, normalized_email):
         audit_auth_denied(
-            event="password_login", reason="rate_limited", actor_email=normalized_email
+            event=AUTH_EVENT_PASSWORD_LOGIN,
+            reason=AUTH_REASON_RATE_LIMITED,
+            actor_email=normalized_email,
         )
         return render_login_template(
             request,
@@ -190,8 +206,8 @@ async def login(
     if user is None:
         record_login_failure(request, normalized_email)
         audit_auth_denied(
-            event="password_login",
-            reason="account_not_found",
+            event=AUTH_EVENT_PASSWORD_LOGIN,
+            reason=AUTH_REASON_ACCOUNT_NOT_FOUND,
             actor_email=normalized_email,
         )
         return render_login_template(
@@ -202,7 +218,11 @@ async def login(
 
     if not user.is_active:
         record_login_failure(request, normalized_email)
-        audit_auth_denied(event="password_login", reason="inactive_user", actor=user)
+        audit_auth_denied(
+            event=AUTH_EVENT_PASSWORD_LOGIN,
+            reason=AUTH_REASON_INACTIVE_USER,
+            actor=user,
+        )
         return render_login_template(
             request,
             error="This account is deactivated. Contact an admin.",
@@ -211,7 +231,11 @@ async def login(
 
     if user.password_hash is None or not verify_password(password, user.password_hash):
         record_login_failure(request, normalized_email)
-        audit_auth_denied(event="password_login", reason="invalid_credentials", actor=user)
+        audit_auth_denied(
+            event=AUTH_EVENT_PASSWORD_LOGIN,
+            reason=AUTH_REASON_INVALID_CREDENTIALS,
+            actor=user,
+        )
         return render_login_template(
             request,
             error="Invalid email or password",
@@ -221,7 +245,7 @@ async def login(
     await maybe_promote_bootstrap_admin(user, session)
 
     request.session["user_id"] = str(user.id)
-    audit_auth_success(event="password_login", actor=user)
+    audit_auth_success(event=AUTH_EVENT_PASSWORD_LOGIN, actor=user)
     return RedirectResponse(url="/dashboard", status_code=303)
 
 
@@ -257,7 +281,11 @@ async def signup(
     users = UserRepository(session)
     existing = await users.get_by_email(normalized_email)
     if existing is not None:
-        audit_auth_denied(event="signup", reason="account_exists", actor_email=normalized_email)
+        audit_auth_denied(
+            event=AUTH_EVENT_SIGNUP,
+            reason=AUTH_REASON_ACCOUNT_EXISTS,
+            actor_email=normalized_email,
+        )
         return _render_signup_template(
             request,
             error="Account already exists. Sign in instead.",
@@ -284,14 +312,14 @@ async def signup(
     await session.refresh(user)
 
     request.session["user_id"] = str(user.id)
-    audit_auth_success(event="signup", actor=user, role=user.role.value)
+    audit_auth_success(event=AUTH_EVENT_SIGNUP, actor=user, role=user.role.value)
     return RedirectResponse(url="/dashboard", status_code=303)
 
 
 @router.post("/logout", response_class=RedirectResponse)
 async def logout(request: Request) -> RedirectResponse:
     user_id = request.session.get("user_id")
-    audit_auth_success(event="logout", actor_user_id=user_id)
+    audit_auth_success(event=AUTH_EVENT_LOGOUT, actor_user_id=user_id)
     request.session.clear()
     return RedirectResponse(url="/", status_code=303)
 

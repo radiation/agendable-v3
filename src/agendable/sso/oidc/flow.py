@@ -3,9 +3,10 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
 
 from fastapi import Request
+
+from agendable.sso.oidc.client import OidcClient
 
 _OIDC_LINK_USER_ID_SESSION_KEY = "oidc_link_user_id"
 
@@ -60,12 +61,8 @@ def userinfo_name_parts(userinfo: Mapping[str, object], email: str) -> tuple[str
     return first_name, last_name
 
 
-def _as_userinfo_mapping(value: object) -> Mapping[str, object]:
-    return cast(Mapping[str, object], value)
-
-
 async def parse_userinfo_from_token(
-    oidc_client: Any,
+    oidc_client: OidcClient,
     request: Request,
     token: Mapping[str, object],
 ) -> Mapping[str, object]:
@@ -73,16 +70,14 @@ async def parse_userinfo_from_token(
 
     if "id_token" in token:
         try:
-            parsed_userinfo = _as_userinfo_mapping(await oidc_client.parse_id_token(request, token))
+            parsed_userinfo = await oidc_client.parse_id_token(request, token)
         except TypeError:
-            parsed_userinfo = _as_userinfo_mapping(
-                await oidc_client.parse_id_token(token, nonce=None)
-            )
+            parsed_userinfo = await oidc_client.parse_id_token(token, nonce=None)
         except Exception:
             parsed_userinfo = None
 
     if parsed_userinfo is None:
-        parsed_userinfo = _as_userinfo_mapping(await oidc_client.userinfo(token=token))
+        parsed_userinfo = await oidc_client.userinfo(token=token)
 
     return parsed_userinfo
 
