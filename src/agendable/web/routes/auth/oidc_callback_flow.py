@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping
-from typing import Any
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import Request
@@ -20,6 +19,7 @@ from agendable.services.oidc_service import (
     oidc_login_error_message,
     resolve_oidc_login_resolution,
 )
+from agendable.settings import Settings
 from agendable.sso_oidc_client import OidcClient
 from agendable.sso_oidc_flow import (
     OidcIdentityClaims,
@@ -315,7 +315,7 @@ def domain_block_response(
 async def rate_limit_block_response(
     request: Request,
     *,
-    settings: Any,
+    settings: Settings,
     link_user_id: uuid.UUID | None,
     email: str,
     session: AsyncSession,

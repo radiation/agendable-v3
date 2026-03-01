@@ -80,6 +80,7 @@ known-first-party = ["agendable"]
 
 [tool.mypy]
 python_version = "3.14"
+mypy_path = "src"
 strict = true
 warn_unreachable = true
 pretty = true
