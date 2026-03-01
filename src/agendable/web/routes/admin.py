@@ -14,8 +14,8 @@ from agendable.db import get_session
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.logging_config import log_with_fields
-from agendable.security_audit import audit_admin_denied, audit_admin_success
-from agendable.security_audit_constants import (
+from agendable.security.audit import audit_admin_denied, audit_admin_success
+from agendable.security.audit_constants import (
     ADMIN_EVENT_USER_ACTIVE_UPDATE,
     ADMIN_EVENT_USER_ROLE_UPDATE,
     ADMIN_REASON_INVALID_ROLE,

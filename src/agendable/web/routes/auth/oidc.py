@@ -13,8 +13,8 @@ from agendable.db import get_session
 from agendable.db.models import User
 from agendable.db.repos import ExternalIdentityRepository
 from agendable.logging_config import log_with_fields
-from agendable.security_audit import audit_oidc_denied, audit_oidc_success
-from agendable.security_audit_constants import (
+from agendable.security.audit import audit_oidc_denied, audit_oidc_success
+from agendable.security.audit_constants import (
     OIDC_EVENT_CALLBACK,
     OIDC_EVENT_IDENTITY_LINK_START,
     OIDC_EVENT_IDENTITY_UNLINK,
@@ -25,7 +25,7 @@ from agendable.security_audit_constants import (
     OIDC_REASON_RATE_LIMITED,
 )
 from agendable.settings import get_settings
-from agendable.sso_oidc_flow import (
+from agendable.sso.oidc.flow import (
     build_authorize_params,
     get_oidc_link_user_id,
     set_oidc_link_user_id,

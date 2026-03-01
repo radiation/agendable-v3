@@ -13,8 +13,8 @@ from agendable.auth import hash_password, require_user, verify_password
 from agendable.db import get_session
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
-from agendable.security_audit import audit_auth_denied, audit_auth_success
-from agendable.security_audit_constants import (
+from agendable.security.audit import audit_auth_denied, audit_auth_success
+from agendable.security.audit_constants import (
     AUTH_EVENT_LOGOUT,
     AUTH_EVENT_PASSWORD_LOGIN,
     AUTH_EVENT_SIGNUP,
@@ -25,7 +25,7 @@ from agendable.security_audit_constants import (
     AUTH_REASON_RATE_LIMITED,
 )
 from agendable.settings import get_settings
-from agendable.sso_oidc_client import OidcClient
+from agendable.sso.oidc.client import OidcClient
 from agendable.web.routes.auth.oidc import router as auth_oidc_router
 from agendable.web.routes.auth.rate_limits import is_login_rate_limited, record_login_failure
 from agendable.web.routes.common import oauth, parse_timezone, templates

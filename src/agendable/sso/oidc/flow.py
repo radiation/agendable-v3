@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
-from agendable.sso_oidc_client import OidcClient
+from agendable.sso.oidc.client import OidcClient
 
 _OIDC_LINK_USER_ID_SESSION_KEY = "oidc_link_user_id"
 

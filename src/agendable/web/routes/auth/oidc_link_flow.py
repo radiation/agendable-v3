@@ -11,14 +11,14 @@ from starlette.responses import Response
 from agendable.db.models import ExternalIdentity, User
 from agendable.db.repos import ExternalIdentityRepository
 from agendable.logging_config import log_with_fields
-from agendable.security_audit import audit_oidc_denied, audit_oidc_success
-from agendable.security_audit_constants import (
+from agendable.security.audit import audit_oidc_denied, audit_oidc_success
+from agendable.security.audit_constants import (
     OIDC_EVENT_IDENTITY_LINK,
     OIDC_REASON_ALREADY_LINKED_OTHER_USER,
     OIDC_REASON_EMAIL_MISMATCH,
 )
 from agendable.services.oidc_service import resolve_oidc_link_resolution
-from agendable.sso_oidc_flow import clear_oidc_link_user_id
+from agendable.sso.oidc.flow import clear_oidc_link_user_id
 from agendable.web.routes import auth as auth_routes
 
 logger = logging.getLogger("uvicorn.error")

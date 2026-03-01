@@ -7,13 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
-from agendable.security_audit_constants import (
+from agendable.security.audit_constants import (
     OIDC_REASON_ALREADY_LINKED_OTHER_USER,
     OIDC_REASON_EMAIL_MISMATCH,
     OIDC_REASON_INACTIVE_USER,
     OIDC_REASON_PASSWORD_USER_REQUIRES_LINK,
 )
-from agendable.sso_oidc_flow import userinfo_name_parts
+from agendable.sso.oidc.flow import userinfo_name_parts
 
 
 @dataclass(frozen=True)

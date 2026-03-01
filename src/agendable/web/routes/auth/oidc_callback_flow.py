@@ -12,8 +12,8 @@ from starlette.responses import Response
 
 from agendable.db.models import ExternalIdentity, User
 from agendable.logging_config import log_with_fields
-from agendable.security_audit import audit_oidc_denied, audit_oidc_success
-from agendable.security_audit_constants import (
+from agendable.security.audit import audit_oidc_denied, audit_oidc_success
+from agendable.security.audit_constants import (
     OIDC_EVENT_CALLBACK,
     OIDC_EVENT_CALLBACK_LOGIN,
     OIDC_REASON_DOMAIN_NOT_ALLOWED,
@@ -28,8 +28,8 @@ from agendable.services.oidc_service import (
     resolve_oidc_login_resolution,
 )
 from agendable.settings import Settings
-from agendable.sso_oidc_client import OidcClient
-from agendable.sso_oidc_flow import (
+from agendable.sso.oidc.client import OidcClient
+from agendable.sso.oidc.flow import (
     OidcIdentityClaims,
     parse_identity_claims,
     parse_userinfo_from_token,
