@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import Request
@@ -20,6 +20,7 @@ from agendable.services.oidc_service import (
     oidc_login_error_message,
     resolve_oidc_login_resolution,
 )
+from agendable.sso_oidc_client import OidcClient
 from agendable.sso_oidc_flow import (
     OidcIdentityClaims,
     parse_identity_claims,
@@ -51,7 +52,7 @@ def auth_oidc_enabled() -> bool:
     return enabled_fn()
 
 
-def auth_oidc_oauth_client() -> Any:
+def auth_oidc_oauth_client() -> OidcClient:
     client_fn = getattr(auth_routes, "_oidc_oauth_client", auth_routes.oidc_oauth_client)
     return client_fn()
 
@@ -177,7 +178,7 @@ async def _create_login_identity_if_needed(
 async def _exchange_token_or_error(
     request: Request,
     *,
-    oidc_client: Any,
+    oidc_client: OidcClient,
     debug_oidc: bool,
     link_user_id: uuid.UUID | None,
     session: AsyncSession,
@@ -198,13 +199,13 @@ async def _exchange_token_or_error(
             )
         return _login_redirect()
 
-    return cast(dict[str, object], token)
+    return token
 
 
 async def _parse_and_validate_claims_or_error(
     request: Request,
     *,
-    oidc_client: Any,
+    oidc_client: OidcClient,
     token: dict[str, object],
     debug_oidc: bool,
     link_user_id: uuid.UUID | None,
@@ -256,7 +257,7 @@ async def _parse_and_validate_claims_or_error(
 async def extract_oidc_identity_or_response(
     request: Request,
     *,
-    oidc_client: Any,
+    oidc_client: OidcClient,
     debug_oidc: bool,
     link_user_id: uuid.UUID | None,
     session: AsyncSession,

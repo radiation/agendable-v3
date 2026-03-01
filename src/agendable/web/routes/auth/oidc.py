@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -71,10 +70,7 @@ async def oidc_start(request: Request) -> Response:
     oidc_client = auth_oidc_oauth_client()
     authorize_params = build_authorize_params(settings.oidc_auth_prompt)
 
-    return cast(
-        Response,
-        await oidc_client.authorize_redirect(request, redirect_uri, **authorize_params),
-    )
+    return await oidc_client.authorize_redirect(request, redirect_uri, **authorize_params)
 
 
 @router.get("/auth/oidc/callback", name="oidc_callback")

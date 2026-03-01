@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, cast
+from typing import cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -15,6 +15,7 @@ from agendable.db.models import User, UserRole
 from agendable.db.repos import ExternalIdentityRepository, UserRepository
 from agendable.security_audit import audit_auth_denied, audit_auth_success
 from agendable.settings import get_settings
+from agendable.sso_oidc_client import OidcClient
 from agendable.web.routes.auth.oidc import router as auth_oidc_router
 from agendable.web.routes.auth.rate_limits import is_login_rate_limited, record_login_failure
 from agendable.web.routes.common import oauth, parse_timezone, templates
@@ -117,11 +118,14 @@ async def get_user_or_404(session: AsyncSession, user_id: uuid.UUID) -> User:
     return user
 
 
-def _oidc_oauth_client() -> Any:
-    return cast(Any, oauth).oidc
+def _oidc_oauth_client() -> OidcClient:
+    client = oauth.create_client("oidc")
+    if client is None:
+        raise RuntimeError("OIDC OAuth client is not configured")
+    return cast(OidcClient, client)
 
 
-def oidc_oauth_client() -> Any:
+def oidc_oauth_client() -> OidcClient:
     return _oidc_oauth_client()
 
 
