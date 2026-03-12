@@ -65,14 +65,15 @@ def is_bootstrap_admin_email(email: str) -> bool:
     return configured.strip().lower() == email.strip().lower()
 
 
-async def maybe_promote_bootstrap_admin(user: User, session: AsyncSession) -> None:
+async def maybe_promote_bootstrap_admin(user: User, session: AsyncSession) -> bool:
     if user.role == UserRole.admin:
-        return
+        return False
     if not is_bootstrap_admin_email(user.email):
-        return
+        return False
 
     user.role = UserRole.admin
-    await session.commit()
+    await session.flush()
+    return True
 
 
 def render_login_template(
@@ -324,7 +325,9 @@ async def login(
             status_code=401,
         )
 
-    await maybe_promote_bootstrap_admin(user, session)
+    was_promoted = await maybe_promote_bootstrap_admin(user, session)
+    if was_promoted:
+        await session.commit()
 
     request.session["user_id"] = str(user.id)
     audit_auth_success(event=AUTH_EVENT_PASSWORD_LOGIN, actor=user)

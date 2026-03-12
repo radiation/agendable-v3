@@ -156,7 +156,7 @@ async def _maybe_create_identity(
         user_id=link_user.id, provider=identity_provider, subject=sub, email=email
     )
     session.add(ext)
-    await session.commit()
+    await session.flush()
 
 
 async def _maybe_upsert_google_calendar_connection(
@@ -249,6 +249,7 @@ async def handle_link_callback(
         token_capture=token_capture,
         settings=settings,
     )
+    await session.commit()
 
     clear_oidc_link_user_id(request)
     request.session["user_id"] = str(link_user.id)

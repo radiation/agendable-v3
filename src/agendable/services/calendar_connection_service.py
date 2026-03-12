@@ -50,5 +50,4 @@ async def upsert_google_primary_calendar_connection(
     connection.scope = token_capture.scope
     connection.is_enabled = True
 
-    await connection_repo.commit()
     return connection

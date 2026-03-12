@@ -68,5 +68,4 @@ async def create_series_with_occurrences(
             ]
         )
 
-    await session.commit()
     return series, occurrences

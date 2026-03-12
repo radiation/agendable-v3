@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
@@ -13,18 +13,11 @@ from agendable.auth import require_user, verify_password
 from agendable.db import get_session
 from agendable.db.models import (
     CalendarProvider,
-    ExternalCalendarEventMirror,
-    ImportedSeriesDecision,
-    MeetingOccurrence,
-    MeetingSeries,
     User,
 )
-from agendable.db.repos import (
-    ExternalCalendarConnectionRepository,
-    ExternalCalendarEventMirrorRepository,
-    ExternalIdentityRepository,
-)
+from agendable.db.repos import ExternalCalendarConnectionRepository, ExternalIdentityRepository
 from agendable.logging_config import log_with_fields
+from agendable.providers import build_google_calendar_sync_service
 from agendable.security.audit import audit_oidc_denied, audit_oidc_success
 from agendable.security.audit_constants import (
     OIDC_EVENT_CALLBACK,
@@ -36,14 +29,21 @@ from agendable.security.audit_constants import (
     OIDC_REASON_PROVIDER_DISABLED,
     OIDC_REASON_RATE_LIMITED,
 )
-from agendable.services.calendar_event_mapping_service import CalendarEventMappingService
 from agendable.services.google_calendar_client import GoogleCalendarHttpClient
 from agendable.services.google_calendar_sync_service import GoogleCalendarSyncService
+from agendable.services.google_imported_series_service import (
+    GoogleImportedSeriesService,
+    ImportedSeriesNotFoundError,
+    MissingGoogleCalendarConnectionError,
+)
 from agendable.settings import get_settings
 from agendable.sso.oidc.flow import (
     build_authorize_params,
     get_oidc_link_user_id,
     set_oidc_link_user_id,
+)
+from agendable.web.dependencies import (
+    get_google_imported_series_service,
 )
 from agendable.web.routes import auth as auth_routes
 from agendable.web.routes.auth.oidc_callbacks import (
@@ -60,12 +60,23 @@ from agendable.web.routes.auth.rate_limits import is_identity_link_start_rate_li
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
 
 def build_google_calendar_client() -> GoogleCalendarHttpClient:
     settings = get_settings()
     return GoogleCalendarHttpClient(
         api_base_url=settings.google_calendar_api_base_url,
         initial_sync_days_back=settings.google_calendar_initial_sync_days_back,
+    )
+
+
+def get_google_calendar_sync_service(session: SessionDep) -> GoogleCalendarSyncService:
+    settings = get_settings()
+    return build_google_calendar_sync_service(
+        session=session,
+        settings=settings,
+        calendar_client=build_google_calendar_client(),
     )
 
 
@@ -288,6 +299,7 @@ async def sync_google_calendar_now(
     request: Request,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
+    sync_service: GoogleCalendarSyncService = Depends(get_google_calendar_sync_service),
 ) -> Response:
     settings = get_settings()
     if not settings.google_calendar_sync_enabled:
@@ -309,13 +321,6 @@ async def sync_google_calendar_now(
             status_code=400,
         )
 
-    sync_service = GoogleCalendarSyncService(
-        connection_repo=connection_repo,
-        event_mirror_repo=ExternalCalendarEventMirrorRepository(session),
-        calendar_client=build_google_calendar_client(),
-        event_mapper=CalendarEventMappingService(session=session),
-        settings=settings,
-    )
     try:
         synced_event_count = await sync_service.sync_connection(connection)
     except Exception:
@@ -349,6 +354,7 @@ async def keep_google_imported_series(
     series_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
+    import_service: GoogleImportedSeriesService = Depends(get_google_imported_series_service),
 ) -> Response:
     settings = get_settings()
     if not settings.google_calendar_sync_enabled:
@@ -356,23 +362,14 @@ async def keep_google_imported_series(
 
     user = await auth_routes.get_user_or_404(session, current_user.id)
 
-    series = await session.get(MeetingSeries, series_id)
-    if series is None or series.owner_user_id != user.id:
-        raise HTTPException(status_code=404)
-
-    if (
-        series.imported_from_provider != CalendarProvider.google
-        or series.import_decision != ImportedSeriesDecision.pending
-    ):
-        raise HTTPException(status_code=404)
-
-    connection_repo = ExternalCalendarConnectionRepository(session)
-    connection = await connection_repo.get_for_user_provider_calendar(
-        user_id=user.id,
-        provider=CalendarProvider.google,
-        external_calendar_id="primary",
-    )
-    if connection is None:
+    try:
+        await import_service.keep_pending_google_series(
+            user_id=user.id,
+            series_id=series_id,
+        )
+    except ImportedSeriesNotFoundError:
+        raise HTTPException(status_code=404) from None
+    except MissingGoogleCalendarConnectionError:
         return await auth_routes.render_profile_template(
             request,
             session=session,
@@ -381,32 +378,6 @@ async def keep_google_imported_series(
             status_code=400,
         )
 
-    series.import_decision = ImportedSeriesDecision.kept
-
-    import_series_id = series.import_external_series_id
-    if import_series_id:
-        mirrors = list(
-            (
-                await session.execute(
-                    select(ExternalCalendarEventMirror)
-                    .where(
-                        ExternalCalendarEventMirror.connection_id == connection.id,
-                        ExternalCalendarEventMirror.external_recurring_event_id == import_series_id,
-                    )
-                    .order_by(ExternalCalendarEventMirror.created_at.asc())
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if mirrors:
-            await CalendarEventMappingService(session=session).map_mirrors(
-                connection=connection,
-                mirrors=mirrors,
-                recurring_event_details_by_id=None,
-            )
-
-    await session.commit()
     return RedirectResponse(url="/profile", status_code=303)
 
 
@@ -418,54 +389,20 @@ async def reject_google_imported_series(
     series_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(require_user),
+    import_service: GoogleImportedSeriesService = Depends(get_google_imported_series_service),
 ) -> RedirectResponse:
     settings = get_settings()
     if not settings.google_calendar_sync_enabled:
         raise HTTPException(status_code=404)
 
-    series = await session.get(MeetingSeries, series_id)
-    if series is None or series.owner_user_id != current_user.id:
-        raise HTTPException(status_code=404)
-
-    if (
-        series.imported_from_provider != CalendarProvider.google
-        or series.import_decision != ImportedSeriesDecision.pending
-    ):
-        raise HTTPException(status_code=404)
-
-    # Keep the series row as a tombstone so this external recurring ID stays rejected.
-    series.import_decision = ImportedSeriesDecision.rejected
-
-    mirrors = list(
-        (
-            await session.execute(
-                select(ExternalCalendarEventMirror)
-                .join(
-                    MeetingOccurrence,
-                    ExternalCalendarEventMirror.linked_occurrence_id == MeetingOccurrence.id,
-                )
-                .where(MeetingOccurrence.series_id == series.id)
-            )
+    try:
+        await import_service.reject_pending_google_series(
+            user_id=current_user.id,
+            series_id=series_id,
         )
-        .scalars()
-        .all()
-    )
-    for mirror in mirrors:
-        mirror.linked_occurrence_id = None
+    except ImportedSeriesNotFoundError:
+        raise HTTPException(status_code=404) from None
 
-    occurrences = list(
-        (
-            await session.execute(
-                select(MeetingOccurrence).where(MeetingOccurrence.series_id == series.id)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for occurrence in occurrences:
-        await session.delete(occurrence)
-
-    await session.commit()
     return RedirectResponse(url="/profile", status_code=303)
 
 

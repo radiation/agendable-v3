@@ -5,11 +5,15 @@ from datetime import UTC, datetime, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dateutil.rrule import rrulestr
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.db.models import AgendaItem, MeetingOccurrence, MeetingSeries, Task
-from agendable.db.repos import MeetingOccurrenceRepository
+from agendable.db.models import MeetingOccurrence
+from agendable.db.repos import (
+    AgendaItemRepository,
+    MeetingOccurrenceRepository,
+    MeetingSeriesRepository,
+    TaskRepository,
+)
 from agendable.recurrence import normalize_rrule
 
 
@@ -59,16 +63,11 @@ async def _get_occurrence_by_scheduled_at(
     series_id: uuid.UUID,
     scheduled_at: datetime,
 ) -> MeetingOccurrence | None:
-    return (
-        await session.execute(
-            select(MeetingOccurrence)
-            .where(
-                MeetingOccurrence.series_id == series_id,
-                MeetingOccurrence.scheduled_at == scheduled_at,
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    occurrence_repo = MeetingOccurrenceRepository(session)
+    return await occurrence_repo.get_for_series_scheduled_at(
+        series_id=series_id,
+        scheduled_at=scheduled_at,
+    )
 
 
 async def _ensure_next_occurrence_from_rrule(
@@ -76,7 +75,8 @@ async def _ensure_next_occurrence_from_rrule(
     *,
     occurrence: MeetingOccurrence,
 ) -> MeetingOccurrence | None:
-    series = await session.get(MeetingSeries, occurrence.series_id)
+    series_repo = MeetingSeriesRepository(session)
+    series = await series_repo.get(occurrence.series_id)
     if series is None:
         return None
 
@@ -103,14 +103,14 @@ async def _ensure_next_occurrence_from_rrule(
     if existing is not None:
         return existing
 
+    occurrence_repo = MeetingOccurrenceRepository(session)
     next_occurrence = MeetingOccurrence(
         series_id=occurrence.series_id,
         scheduled_at=next_utc,
         notes="",
         is_completed=False,
     )
-    session.add(next_occurrence)
-    await session.flush()
+    await occurrence_repo.add(next_occurrence)
     return next_occurrence
 
 
@@ -122,6 +122,8 @@ async def complete_occurrence_and_roll_forward(
     create_next_if_missing: bool = True,
 ) -> MeetingOccurrence | None:
     occ_repo = MeetingOccurrenceRepository(session)
+    task_repo = TaskRepository(session)
+    agenda_item_repo = AgendaItemRepository(session)
     next_occurrence = await occ_repo.get_next_for_series(
         occurrence.series_id,
         occurrence.scheduled_at,
@@ -134,15 +136,14 @@ async def complete_occurrence_and_roll_forward(
         )
 
     if next_occurrence is not None:
-        await session.execute(
-            update(Task)
-            .where(Task.occurrence_id == occurrence.id, Task.is_done.is_(False))
-            .values(occurrence_id=next_occurrence.id, due_at=next_occurrence.scheduled_at)
+        await task_repo.reassign_open_tasks(
+            from_occurrence_id=occurrence.id,
+            to_occurrence_id=next_occurrence.id,
+            to_due_at=next_occurrence.scheduled_at,
         )
-        await session.execute(
-            update(AgendaItem)
-            .where(AgendaItem.occurrence_id == occurrence.id, AgendaItem.is_done.is_(False))
-            .values(occurrence_id=next_occurrence.id)
+        await agenda_item_repo.reassign_open_items(
+            from_occurrence_id=occurrence.id,
+            to_occurrence_id=next_occurrence.id,
         )
 
     occurrence.is_completed = True

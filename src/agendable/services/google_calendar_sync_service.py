@@ -1,23 +1,24 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import text
 
 from agendable.db.models import (
     CalendarProvider,
     ExternalCalendarConnection,
     ExternalCalendarEventMirror,
-    MeetingOccurrence,
     MeetingSeries,
 )
 from agendable.db.repos import (
     ExternalCalendarConnectionRepository,
     ExternalCalendarEventMirrorRepository,
+    MeetingSeriesRepository,
 )
 from agendable.services.external_calendar_api import (
     ExternalCalendarAuth,
@@ -57,15 +58,36 @@ class GoogleCalendarSyncService:
         *,
         connection_repo: ExternalCalendarConnectionRepository,
         event_mirror_repo: ExternalCalendarEventMirrorRepository,
+        series_repo: MeetingSeriesRepository | None = None,
         calendar_client: ExternalCalendarClient,
         event_mapper: CalendarEventMapper | None = None,
         settings: Settings | None = None,
     ) -> None:
         self.connection_repo = connection_repo
         self.event_mirror_repo = event_mirror_repo
+        self.series_repo = series_repo or MeetingSeriesRepository(event_mirror_repo.session)
         self.calendar_client = calendar_client
         self.event_mapper = event_mapper
         self.settings = settings
+
+    @classmethod
+    def from_repositories(
+        cls,
+        *,
+        connection_repo: ExternalCalendarConnectionRepository,
+        event_mirror_repo: ExternalCalendarEventMirrorRepository,
+        calendar_client: ExternalCalendarClient,
+        event_mapper: CalendarEventMapper | None = None,
+        settings: Settings | None = None,
+    ) -> GoogleCalendarSyncService:
+        return cls(
+            connection_repo=connection_repo,
+            event_mirror_repo=event_mirror_repo,
+            series_repo=MeetingSeriesRepository(event_mirror_repo.session),
+            calendar_client=calendar_client,
+            event_mapper=event_mapper,
+            settings=settings,
+        )
 
     async def sync_connection(self, connection: ExternalCalendarConnection) -> int:
         refreshed_preflight = await self._maybe_refresh_google_access_token(connection)
@@ -525,25 +547,13 @@ class GoogleCalendarSyncService:
     async def _find_series_for_recurring_event(
         self,
         *,
-        connection_id: object,
+        connection_id: uuid.UUID,
         recurring_event_id: str,
     ) -> MeetingSeries | None:
-        session = self.event_mirror_repo.session
-        result = await session.execute(
-            select(MeetingSeries)
-            .join(MeetingOccurrence, MeetingOccurrence.series_id == MeetingSeries.id)
-            .join(
-                ExternalCalendarEventMirror,
-                ExternalCalendarEventMirror.linked_occurrence_id == MeetingOccurrence.id,
-            )
-            .where(
-                ExternalCalendarEventMirror.connection_id == connection_id,
-                ExternalCalendarEventMirror.external_recurring_event_id == recurring_event_id,
-            )
-            .order_by(MeetingSeries.created_at.asc())
-            .limit(1)
+        return await self.series_repo.find_for_connection_recurring_event(
+            connection_id=connection_id,
+            recurring_event_id=recurring_event_id,
         )
-        return result.scalar_one_or_none()
 
     async def sync_all_enabled_connections(self) -> int:
         synced_event_count = 0

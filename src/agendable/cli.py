@@ -14,12 +14,14 @@ from agendable.db.repos import (
     ExternalCalendarEventMirrorRepository,
     ReminderRepository,
 )
-from agendable.db.repos.reminders import claim_reminder_attempt as claim_reminder_attempt_in_repo
 from agendable.logging_config import configure_logging, log_with_fields
 from agendable.reminders import ReminderSender, build_reminder_sender
 from agendable.services.calendar_event_mapping_service import CalendarEventMappingService
 from agendable.services.google_calendar_client import GoogleCalendarHttpClient
 from agendable.services.google_calendar_sync_service import GoogleCalendarSyncService
+from agendable.services.reminder_claim_service import (
+    claim_reminder_attempt as claim_reminder_attempt_in_service,
+)
 from agendable.services.reminder_delivery_service import run_due_reminders
 from agendable.settings import get_settings
 
@@ -33,7 +35,7 @@ async def _init_db() -> None:
 
 async def _claim_reminder_attempt(*, reminder: Reminder, now: datetime) -> bool:
     settings = get_settings()
-    return await claim_reminder_attempt_in_repo(
+    return await claim_reminder_attempt_in_service(
         reminder=reminder,
         now=now,
         claim_lease_seconds=settings.reminder_claim_lease_seconds,
@@ -88,7 +90,7 @@ async def _run_google_calendar_sync() -> int:
                 api_base_url=settings.google_calendar_api_base_url,
                 initial_sync_days_back=settings.google_calendar_initial_sync_days_back,
             ),
-            event_mapper=CalendarEventMappingService(session=session),
+            event_mapper=CalendarEventMappingService.from_session(session),
             settings=settings,
         )
         synced_event_count = await sync_service.sync_all_enabled_connections()

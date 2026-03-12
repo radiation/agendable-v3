@@ -8,9 +8,11 @@ from datetime import UTC, datetime, timedelta
 
 from agendable.db.models import Reminder, ReminderChannel, ReminderDeliveryStatus
 from agendable.db.repos import ReminderRepository
-from agendable.db.repos.reminders import claim_reminder_attempt as claim_reminder_attempt_in_repo
 from agendable.logging_config import log_with_fields
 from agendable.reminders import ReminderDeliveryError, ReminderEmail, ReminderSender, as_utc
+from agendable.services.reminder_claim_service import (
+    claim_reminder_attempt as claim_reminder_attempt_in_service,
+)
 from agendable.settings import Settings, get_settings
 
 
@@ -156,7 +158,7 @@ class ReminderDeliveryService:
         if self.claim_attempt is not None:
             return await self.claim_attempt(reminder=reminder, now=now)
 
-        return await claim_reminder_attempt_in_repo(
+        return await claim_reminder_attempt_in_service(
             reminder=reminder,
             now=now,
             claim_lease_seconds=self.settings.reminder_claim_lease_seconds,

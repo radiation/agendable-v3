@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db.models import AgendaItem
@@ -23,3 +23,15 @@ class AgendaItemRepository(BaseRepository[AgendaItem]):
 
     async def get_by_id(self, item_id: uuid.UUID) -> AgendaItem | None:
         return await self.get(item_id)
+
+    async def reassign_open_items(
+        self,
+        *,
+        from_occurrence_id: uuid.UUID,
+        to_occurrence_id: uuid.UUID,
+    ) -> None:
+        await self.session.execute(
+            update(AgendaItem)
+            .where(AgendaItem.occurrence_id == from_occurrence_id, AgendaItem.is_done.is_(False))
+            .values(occurrence_id=to_occurrence_id)
+        )

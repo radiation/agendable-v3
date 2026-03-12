@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agendable.db.models import ExternalCalendarEventMirror
+from agendable.db.models import ExternalCalendarEventMirror, MeetingOccurrence
 from agendable.db.repos.base import BaseRepository
 
 
@@ -79,3 +79,34 @@ class ExternalCalendarEventMirrorRepository(BaseRepository[ExternalCalendarEvent
             .limit(1)
         )
         return result.scalar_one_or_none() is not None
+
+    async def list_for_connection_recurring_event(
+        self,
+        *,
+        connection_id: uuid.UUID,
+        recurring_event_id: str,
+    ) -> list[ExternalCalendarEventMirror]:
+        result = await self.session.execute(
+            select(ExternalCalendarEventMirror)
+            .where(
+                ExternalCalendarEventMirror.connection_id == connection_id,
+                ExternalCalendarEventMirror.external_recurring_event_id == recurring_event_id,
+            )
+            .order_by(ExternalCalendarEventMirror.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def list_linked_to_series(
+        self,
+        *,
+        series_id: uuid.UUID,
+    ) -> list[ExternalCalendarEventMirror]:
+        result = await self.session.execute(
+            select(ExternalCalendarEventMirror)
+            .join(
+                MeetingOccurrence,
+                ExternalCalendarEventMirror.linked_occurrence_id == MeetingOccurrence.id,
+            )
+            .where(MeetingOccurrence.series_id == series_id)
+        )
+        return list(result.scalars().all())

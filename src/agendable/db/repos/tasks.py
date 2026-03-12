@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,3 +26,16 @@ class TaskRepository(BaseRepository[Task]):
 
     async def get_by_id(self, task_id: uuid.UUID) -> Task | None:
         return await self.get(task_id)
+
+    async def reassign_open_tasks(
+        self,
+        *,
+        from_occurrence_id: uuid.UUID,
+        to_occurrence_id: uuid.UUID,
+        to_due_at: datetime,
+    ) -> None:
+        await self.session.execute(
+            update(Task)
+            .where(Task.occurrence_id == from_occurrence_id, Task.is_done.is_(False))
+            .values(occurrence_id=to_occurrence_id, due_at=to_due_at)
+        )

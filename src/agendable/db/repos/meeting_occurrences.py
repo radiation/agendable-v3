@@ -25,6 +25,22 @@ class MeetingOccurrenceRepository(BaseRepository[MeetingOccurrence]):
     async def get_by_id(self, occurrence_id: uuid.UUID) -> MeetingOccurrence | None:
         return await self.get(occurrence_id)
 
+    async def get_for_series_scheduled_at(
+        self,
+        *,
+        series_id: uuid.UUID,
+        scheduled_at: datetime,
+    ) -> MeetingOccurrence | None:
+        result = await self.session.execute(
+            select(MeetingOccurrence)
+            .where(
+                MeetingOccurrence.series_id == series_id,
+                MeetingOccurrence.scheduled_at == scheduled_at,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get_next_for_series(
         self, series_id: uuid.UUID, scheduled_after: datetime
     ) -> MeetingOccurrence | None:

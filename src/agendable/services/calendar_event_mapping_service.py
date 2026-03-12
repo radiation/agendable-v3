@@ -3,7 +3,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agendable.db.models import (
@@ -14,13 +13,33 @@ from agendable.db.models import (
     MeetingOccurrence,
     MeetingSeries,
 )
+from agendable.db.repos import (
+    MeetingOccurrenceRepository,
+    MeetingSeriesRepository,
+)
 from agendable.services.external_calendar_api import ExternalRecurringEventDetails
 from agendable.services.occurrence_service import complete_occurrence_and_roll_forward
 
 
 class CalendarEventMappingService:
-    def __init__(self, *, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        *,
+        session: AsyncSession,
+        occurrence_repo: MeetingOccurrenceRepository | None = None,
+        series_repo: MeetingSeriesRepository | None = None,
+    ) -> None:
         self.session = session
+        self.occurrence_repo = occurrence_repo or MeetingOccurrenceRepository(session)
+        self.series_repo = series_repo or MeetingSeriesRepository(session)
+
+    @classmethod
+    def from_session(cls, session: AsyncSession) -> CalendarEventMappingService:
+        return cls(
+            session=session,
+            occurrence_repo=MeetingOccurrenceRepository(session),
+            series_repo=MeetingSeriesRepository(session),
+        )
 
     async def map_mirrors(
         self,
@@ -96,8 +115,7 @@ class CalendarEventMappingService:
                 notes="",
                 is_completed=False,
             )
-            self.session.add(occurrence)
-            await self.session.flush()
+            await self.occurrence_repo.add(occurrence)
         else:
             occurrence.scheduled_at = normalized_start
             occurrence.is_completed = False
@@ -111,7 +129,7 @@ class CalendarEventMappingService:
     ) -> MeetingOccurrence | None:
         if mirror.linked_occurrence_id is None:
             return None
-        return await self.session.get(MeetingOccurrence, mirror.linked_occurrence_id)
+        return await self.occurrence_repo.get_by_id(mirror.linked_occurrence_id)
 
     async def _resolve_series(
         self,
@@ -122,7 +140,7 @@ class CalendarEventMappingService:
         recurring_event_details_by_id: dict[str, ExternalRecurringEventDetails],
     ) -> MeetingSeries:
         if linked_occurrence is not None:
-            existing_series = await self.session.get(MeetingSeries, linked_occurrence.series_id)
+            existing_series = await self.series_repo.get(linked_occurrence.series_id)
             if existing_series is not None:
                 self._apply_series_title(existing_series, mirror)
                 self._apply_series_recurrence(
@@ -164,8 +182,7 @@ class CalendarEventMappingService:
             import_decision=ImportedSeriesDecision.pending,
         )
         self._apply_series_recurrence(series, mirror, recurring_event_details_by_id)
-        self.session.add(series)
-        await self.session.flush()
+        await self.series_repo.add(series)
         return series
 
     async def _find_series_for_import_key(
@@ -174,17 +191,10 @@ class CalendarEventMappingService:
         owner_user_id: uuid.UUID,
         import_external_series_id: str,
     ) -> MeetingSeries | None:
-        result = await self.session.execute(
-            select(MeetingSeries)
-            .where(
-                MeetingSeries.owner_user_id == owner_user_id,
-                MeetingSeries.imported_from_provider == CalendarProvider.google,
-                MeetingSeries.import_external_series_id == import_external_series_id,
-            )
-            .order_by(MeetingSeries.created_at.asc())
-            .limit(1)
+        return await self.series_repo.find_for_google_import_key(
+            owner_user_id=owner_user_id,
+            import_external_series_id=import_external_series_id,
         )
-        return result.scalar_one_or_none()
 
     def _apply_series_recurrence(
         self,
@@ -213,26 +223,11 @@ class CalendarEventMappingService:
         group_key: str,
         is_recurring: bool,
     ) -> MeetingSeries | None:
-        recurring_predicate = (
-            ExternalCalendarEventMirror.external_recurring_event_id == group_key
-            if is_recurring
-            else ExternalCalendarEventMirror.external_event_id == group_key
+        return await self.series_repo.find_for_connection_group_key(
+            connection_id=connection_id,
+            group_key=group_key,
+            is_recurring=is_recurring,
         )
-        result = await self.session.execute(
-            select(MeetingSeries)
-            .join(MeetingOccurrence, MeetingOccurrence.series_id == MeetingSeries.id)
-            .join(
-                ExternalCalendarEventMirror,
-                ExternalCalendarEventMirror.linked_occurrence_id == MeetingOccurrence.id,
-            )
-            .where(
-                ExternalCalendarEventMirror.connection_id == connection_id,
-                recurring_predicate,
-            )
-            .order_by(MeetingSeries.created_at.asc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
 
     async def _find_occurrence_by_schedule(
         self,
@@ -240,15 +235,10 @@ class CalendarEventMappingService:
         series_id: uuid.UUID,
         scheduled_at: datetime,
     ) -> MeetingOccurrence | None:
-        result = await self.session.execute(
-            select(MeetingOccurrence)
-            .where(
-                MeetingOccurrence.series_id == series_id,
-                MeetingOccurrence.scheduled_at == scheduled_at,
-            )
-            .limit(1)
+        return await self.occurrence_repo.get_for_series_scheduled_at(
+            series_id=series_id,
+            scheduled_at=scheduled_at,
         )
-        return result.scalar_one_or_none()
 
     def _apply_series_title(
         self, series: MeetingSeries, mirror: ExternalCalendarEventMirror

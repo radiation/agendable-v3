@@ -5,6 +5,7 @@ Keep them focused on persistence/query shaping; business logic lives in services
 """
 
 from agendable.db.repos.agenda_items import AgendaItemRepository
+from agendable.db.repos.dashboard import DashboardRepository
 from agendable.db.repos.external_calendar_connections import ExternalCalendarConnectionRepository
 from agendable.db.repos.external_calendar_event_mirrors import (
     ExternalCalendarEventMirrorRepository,
@@ -19,6 +20,7 @@ from agendable.db.repos.users import UserRepository
 
 __all__ = [
     "AgendaItemRepository",
+    "DashboardRepository",
     "ExternalCalendarConnectionRepository",
     "ExternalCalendarEventMirrorRepository",
     "ExternalIdentityRepository",

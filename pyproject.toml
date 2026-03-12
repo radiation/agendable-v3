@@ -1,5 +1,5 @@
 [project]
-name = "agendable-v3"
+name = "agendable"
 version = "0.1.0"
 description = "Tasks and agenda tracking for recurring meetings"
 readme = "README.md"
